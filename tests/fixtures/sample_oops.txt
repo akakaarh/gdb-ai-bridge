@@ -1,0 +1,74 @@
+[   45.123456] Unable to handle kernel NULL pointer dereference at virtual address 0000000000000020
+[   45.123460] Mem abort info:
+[   45.123462]   ESR = 0x96000006
+[   45.123464]   EC = 0x25: DABT (current EL), IL = 32 bits
+[   45.123467]   SET = 0, FnV = 0
+[   45.123469]   EA = 0, S1PTW = 0
+[   45.123471]   FSC = 0x06: level 2 translation fault
+[   45.123474] Data abort info:
+[   45.123476]   ISV = 0, ISS = 0x00000006
+[   45.123478]   CM = 0, WnR = 0
+[   45.123480] [0000000000000020] user address but active_mm is swapper
+[   45.123483] Internal error: Oops: 96000006 [#1] PREEMPT SMP
+[   45.123486] Modules linked in: gpio_pca953x(+) i2c_core
+[   45.123490] CPU: 2 PID: 147 Comm: irq/47-pca953x Not tainted 6.6.32 #1
+[   45.123493] Hardware name: STM32MP157C-DK2 (Device Tree)
+[   45.123496] pstate: 800000c5 (Nzcv daIf -PAN -UAO -TCO -DIT BTYPE=--)
+[   45.123499] pc : pca953x_irq_handler+0x48/0x1c0 [gpio_pca953x]
+[   45.123502] lr : pca953x_irq_handler+0x3c/0x1c0 [gpio_pca953x]
+[   45.123505] sp : ffffffc009a3bd60
+[   45.123507] x29: ffffffc009a3bd60 x28: ffffff8004287000 x27: 0000000000000000
+[   45.123510] x26: ffffff8004287000 x25: ffffffc008d4a000 x24: ffffffc008d4a480
+[   45.123513] x23: ffffffc000bfe000 x22: ffffff8004293a80 x21: 0000000000000000
+[   45.123516] x20: ffffff8004293a00 x19: 0000000000000000 x18: 0000000000000000
+[   45.123519] x17: 0000000000000000 x16: 0000000000000000 x15: 0000000000000000
+[   45.123522] x14: 0000000000000000 x13: 0000000000000000 x12: 0000000000000000
+[   45.123525] x11: 0000000000000000 x10: 0000000000000000 x9 : ffffffc000123456
+[   45.123528] x8 : 0000000000000001 x7 : 0000000000000000 x6 : 000000000000003f
+[   45.123531] x5 : 0000000000000000 x4 : 0000000000000000 x3 : 0000000000000020
+[   45.123534] x2 : 0000000000000000 x1 : ffffff8004293a00 x0 : 0000000000000000
+[   45.123537] Call trace:
+[   45.123539]  pca953x_irq_handler+0x48/0x1c0 [gpio_pca953x]
+[   45.123542]  __handle_irq_event_percpu+0x50/0x140
+[   45.123545]  handle_irq_event+0x58/0xb8
+[   45.123548]  handle_fasteoi_irq+0xac/0x1c0
+[   45.123551]  generic_handle_domain_irq+0x34/0x50
+[   45.123554]  stm32_gpio_handle_irq+0x8c/0xb0
+[   45.123557]  generic_handle_domain_irq+0x34/0x50
+[   45.123560]  __handle_domain_irq+0x68/0xc0
+[   45.123563]  gic_handle_irq+0x50/0x80
+[   45.123566]  call_on_irq_stack+0x24/0x30
+[   45.123569]  do_interrupt_handler+0x80/0x88
+[   45.123572]  el1_interrupt+0x34/0x68
+[   45.123575]  el1h_64_irq+0x6c/0x70
+[   45.123578]  __do_softirq+0x9c/0x268
+[   45.123581]  irq_exit_rcu+0x70/0xb0
+[   45.123584]  el1_interrupt+0x34/0x68
+[   45.123587]  el1h_64_irq+0x6c/0x70
+[   45.123590]  _raw_spin_unlock_irqrestore+0x48/0x50
+[   45.123593]  __setup_irq+0x424/0x6c0
+[   45.123596]  request_threaded_irq+0xc4/0x150
+[   45.123599]  pca953x_probe+0x248/0x400 [gpio_pca953x]
+[   45.123602]  i2c_device_probe+0x128/0x170 [i2c_core]
+[   45.123605]  really_probe+0xbc/0x2c0
+[   45.123608]  __driver_probe_device+0x78/0xe0
+[   45.123611]  driver_probe_device+0x2c/0x120
+[   45.123614]  __driver_attach+0xe0/0x1c0
+[   45.123617]  bus_for_each_dev+0x6c/0xa0
+[   45.123620]  driver_attach+0x24/0x30
+[   45.123623]  bus_add_driver+0x11c/0x200
+[   45.123626]  driver_register+0x64/0xc0
+[   45.123629]  i2c_register_driver+0x48/0x80 [i2c_core]
+[   45.123632]  pca953x_driver_init+0x1c/0x38 [gpio_pca953x]
+[   45.123635]  do_one_initcall+0x50/0x1b0
+[   45.123638]  do_init_module+0x58/0x210
+[   45.123641]  load_module+0x1c00/0x1e00
+[   45.123644]  __do_sys_finit_module+0x170/0x1f0
+[   45.123647]  __arm64_sys_finit_module+0x20/0x30
+[   45.123650]  invoke_syscall+0x48/0x110
+[   45.123653]  el0_svc_common.constprop.0+0x68/0x100
+[   45.123656]  do_el0_svc+0x24/0x38
+[   45.123659]  el0_svc+0x34/0xc0
+[   45.123662]  el0t_64_sync+0x168/0x16c
+[   45.123664] Code: d5384100 f9400000 f9400800 b40002a0 (f9401013)
+[   45.123668] ---[ end trace 0000000000000000 ]---

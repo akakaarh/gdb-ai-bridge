@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.db
+*.json
+!tests/fixtures/*.json
+.env
+.venv/
+*.egg-info/

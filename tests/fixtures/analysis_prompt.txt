@@ -1,0 +1,66 @@
+你是一个 Linux 内核调试专家，擅长分析内核崩溃报告。你的分析应该：
+
+1. 结合寄存器状态和代码逻辑推理崩溃原因
+2. 从调用链推断执行路径和出错环节
+3. 给出具体可操作的排查建议
+4. 如果能判断修复方向，给出建议
+
+回答要简洁、有依据、可操作。不要泛泛而谈。
+
+## 崩溃摘要
+- 错误类型: Unable to handle kernel NULL pointer dereference
+- 故障地址: 0000000000000020
+- 崩溃函数: pca953x_irq_handler
+- 所属模块: gpio_pca953x
+- 架构: arm64
+
+## 关键寄存器
+  sp = ffffffc009a3bd60
+  pstate = 800000c5
+  x0 = 0000000000000000
+  x1 = ffffff8004293a00
+  x2 = 0000000000000000
+  x3 = 0000000000000020
+  x4 = 0000000000000000
+  x5 = 0000000000000000
+  x6 = 000000000000003f
+  x7 = 0000000000000000
+
+## 栈回溯
+  #00 pca953x_irq_handler+0x48/0x1c0 [gpio_pca953x]
+  #01 __handle_irq_event_percpu+0x50/0x140
+  #02 handle_irq_event+0x58/0xb8
+  #03 handle_fasteoi_irq+0xac/0x1c0
+  #04 generic_handle_domain_irq+0x34/0x50
+  #05 stm32_gpio_handle_irq+0x8c/0xb0
+  #06 generic_handle_domain_irq+0x34/0x50
+  #07 __handle_domain_irq+0x68/0xc0
+  #08 gic_handle_irq+0x50/0x80
+  #09 call_on_irq_stack+0x24/0x30
+  #10 do_interrupt_handler+0x80/0x88
+  #11 el1_interrupt+0x34/0x68
+  #12 el1h_64_irq+0x6c/0x70
+  #13 __do_softirq+0x9c/0x268
+  #14 irq_exit_rcu+0x70/0xb0
+  #15 el1_interrupt+0x34/0x68
+  #16 el1h_64_irq+0x6c/0x70
+  #17 _raw_spin_unlock_irqrestore+0x48/0x50
+  #18 __setup_irq+0x424/0x6c0
+  #19 request_threaded_irq+0xc4/0x150
+
+## Crash Function
+- Name: pca953x_irq_handler (static)
+- Signature: irqreturn_t pca953x_irq_handler(int irq,void * devid)
+- Location: drivers/gpio/gpio-pca953x.c:1017
+## Callees (what this function calls)
+  - pca953x_irq_pending at drivers/gpio/gpio-pca953x.c:944
+## Stack Trace Function Details
+  - pca953x_irq_handler (static): irqreturn_t pca953x_irq_handler(int irq,void * devid) at drivers/gpio/gpio-pca953x.c:1017
+
+## 分析任务
+请分析以上内核崩溃报告，输出：
+1. **崩溃原因**：结合寄存器值和代码逻辑判断
+2. **崩溃位置**：具体函数和代码行的作用
+3. **调用路径分析**：从栈回溯推断执行路径
+4. **排查建议**：具体可操作的步骤
+5. **可能的修复方向**

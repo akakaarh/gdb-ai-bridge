@@ -1,0 +1,107 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-05-31T02:07:34.081260",
+  "config": {
+    "arch": "arm",
+    "target": "baremetal",
+    "elf_file": ""
+  },
+  "layer0": {
+    "status": "ok",
+    "registers": {
+      "r0": {
+        "value": "0x00000000",
+        "role": "arg0/retval"
+      },
+      "r1": {
+        "value": "0x00000000",
+        "role": "arg1"
+      },
+      "r2": {
+        "value": "0x00000000",
+        "role": "arg2"
+      },
+      "r3": {
+        "value": "0x00000000",
+        "role": "arg3"
+      },
+      "r4": {
+        "value": "0x00000000",
+        "role": "callee-saved"
+      },
+      "r5": {
+        "value": "0x00000000",
+        "role": "callee-saved"
+      },
+      "r6": {
+        "value": "0x00000000",
+        "role": "callee-saved"
+      },
+      "r7": {
+        "value": "0x00000000",
+        "role": "FP (Thumb)"
+      },
+      "r8": {
+        "value": "0x00000000",
+        "role": "callee-saved"
+      },
+      "r9": {
+        "value": "0x00000000",
+        "role": "callee-saved (platform)"
+      },
+      "r10": {
+        "value": "0x00000000",
+        "role": "callee-saved"
+      },
+      "r11": {
+        "value": "0x00000000",
+        "role": "FP (ARM)"
+      },
+      "r12": {
+        "value": "0x00000000",
+        "role": "IP (Intra-Procedure-call scratch)"
+      },
+      "r13": {
+        "value": "0x00000000",
+        "role": "SP"
+      },
+      "r14": {
+        "value": "0x00000000",
+        "role": "LR"
+      },
+      "r15": {
+        "value": "0x10000006",
+        "role": "PC"
+      },
+      "xpsr": {
+        "value": "0x01000000",
+        "role": "Program Status Register"
+      }
+    },
+    "fault_registers": {},
+    "crash_type": "unknown",
+    "crash_reason": "No fault registers available"
+  },
+  "layer1": {
+    "status": "ok",
+    "exception_frame": {},
+    "stack_trace": [
+      {
+        "function": "_start",
+        "address": "0x10000006",
+        "file": "hardfault_test.c",
+        "line": 11,
+        "confidence": "high"
+      }
+    ],
+    "local_variables": {
+      "p": {
+        "type": "volatile unsigned int *",
+        "value": "0x0",
+        "is_param": false
+      }
+    }
+  },
+  "layer2": {},
+  "errors": []
+}
