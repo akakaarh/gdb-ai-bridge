@@ -1,56 +1,76 @@
+"""Serial port monitor for reading UART output from the target board."""
+
 import threading
 import collections
+import time
 
 
 class SerialMonitor:
     def __init__(self, port, baudrate=115200, buffer_size=1000):
         self.port = port
         self.baudrate = baudrate
-        self.buffer = collections.deque(maxlen=buffer_size)  # ring buffer
+        self._buffer = collections.deque(maxlen=buffer_size)
+        self._lock = threading.Lock()
         self._thread = None
         self._running = False
         self._ser = None
 
     def start(self):
-        """开始监听串口"""
+        """Start monitoring the serial port in a background thread."""
         import serial
-        self._ser = serial.Serial(self.port, self.baudrate, timeout=1)
+        self._ser = serial.Serial(self.port, self.baudrate, timeout=0.1)
         self._running = True
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
         self._thread.start()
 
     def stop(self):
-        """停止监听"""
+        """Stop monitoring."""
         self._running = False
-        if self._ser:
+        if self._thread:
+            self._thread.join(timeout=2)
+        if self._ser and self._ser.is_open:
             self._ser.close()
 
     def read_output(self, timeout=3):
-        """读取所有缓存的串口输出"""
-        import time
-        lines = []
+        """Read all available lines, waiting up to timeout seconds for new data."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self.buffer:
-                lines.append(self.buffer.popleft())
-            else:
-                time.sleep(0.1)
+            with self._lock:
+                if self._buffer:
+                    break
+            time.sleep(0.1)
+        with self._lock:
+            lines = list(self._buffer)
+            self._buffer.clear()
         return "\n".join(lines)
 
     def read_new_lines(self):
-        """读取新增的行（不等待）"""
-        lines = []
-        while self.buffer:
-            lines.append(self.buffer.popleft())
+        """Return any new lines accumulated since last call (non-blocking)."""
+        with self._lock:
+            lines = list(self._buffer)
+            self._buffer.clear()
         return "\n".join(lines)
 
+    def write(self, data):
+        """Send data to the serial port."""
+        if self._ser and self._ser.is_open:
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+            self._ser.write(data)
+
     def _read_loop(self):
+        """Background thread: read bytes one at a time, split on newline."""
+        raw = b""
         while self._running:
             try:
-                line = self._ser.readline()
-                if line:
-                    text = line.decode("utf-8", errors="replace").strip()
-                    if text:
-                        self.buffer.append(text)
+                byte = self._ser.read(1)
+                if byte:
+                    raw += byte
+                    if byte == b"\n":
+                        text = raw.decode("utf-8", errors="replace").strip("\r\n\t ")
+                        if text:
+                            with self._lock:
+                                self._buffer.append(text)
+                        raw = b""
             except Exception:
                 pass

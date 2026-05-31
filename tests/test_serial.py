@@ -19,11 +19,11 @@ class TestSerialMonitor:
         monitor = self._make_monitor()
         assert monitor.port == "COM3"
         assert monitor.baudrate == 115200
-        assert isinstance(monitor.buffer, collections.deque)
+        assert isinstance(monitor._buffer, collections.deque)
 
     def test_buffer_maxlen(self):
         monitor = self._make_monitor()
-        assert monitor.buffer.maxlen == 1000
+        assert monitor._buffer.maxlen == 1000
 
     def test_read_new_lines_empty(self):
         monitor = self._make_monitor()
@@ -31,17 +31,17 @@ class TestSerialMonitor:
 
     def test_read_new_lines_returns_buffered(self):
         monitor = self._make_monitor()
-        monitor.buffer.append("line1")
-        monitor.buffer.append("line2")
+        monitor._buffer.append("line1")
+        monitor._buffer.append("line2")
         result = monitor.read_new_lines()
         assert "line1" in result
         assert "line2" in result
 
     def test_read_new_lines_clears_buffer(self):
         monitor = self._make_monitor()
-        monitor.buffer.append("line1")
+        monitor._buffer.append("line1")
         monitor.read_new_lines()
-        assert len(monitor.buffer) == 0
+        assert len(monitor._buffer) == 0
 
     def test_read_output_empty(self):
         monitor = self._make_monitor()
@@ -50,12 +50,12 @@ class TestSerialMonitor:
 
     def test_ring_buffer_drops_old(self):
         monitor = self._make_monitor()
-        monitor.buffer = collections.deque(maxlen=3)
-        monitor.buffer.append("a")
-        monitor.buffer.append("b")
-        monitor.buffer.append("c")
-        monitor.buffer.append("d")  # "a" dropped
-        assert list(monitor.buffer) == ["b", "c", "d"]
+        monitor._buffer = collections.deque(maxlen=3)
+        monitor._buffer.append("a")
+        monitor._buffer.append("b")
+        monitor._buffer.append("c")
+        monitor._buffer.append("d")  # "a" dropped
+        assert list(monitor._buffer) == ["b", "c", "d"]
 
     def test_start_stop(self):
         with patch.dict(sys.modules, {"serial": MagicMock()}):
