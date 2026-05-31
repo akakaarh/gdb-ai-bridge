@@ -132,9 +132,18 @@ def _parse_call_trace(lines: list[str], info: OopsInfo):
             if frame and frame.function:
                 info.stack_trace.append(frame)
 
-    # Also try ARM32 format if no trace found
+    # If no "Call trace:" header found, try pattern-based detection
     if not info.stack_trace:
-        _parse_arm32_backtrace(lines, info)
+        for raw_line in lines:
+            line = _strip_timestamp(raw_line)
+            # ARM32 backtrace: "[<addr>] (func) from [<addr>] (func)"
+            if re.search(r"\[<[0-9a-fA-F]+>\].*from.*\[<[0-9a-fA-F]+>\]", line):
+                # Parse both sides of "from"
+                parts = re.findall(r"\[<([0-9a-fA-F]+)>\]\s*\(([^)]*)\)", line)
+                for addr, func_name in parts:
+                    if func_name:
+                        frame = Frame(address=addr, function=func_name)
+                        info.stack_trace.append(frame)
 
 
 def _parse_frame(line: str) -> Frame | None:

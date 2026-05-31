@@ -1,0 +1,43 @@
+你是一个嵌入式系统调试专家，擅长分析 ARM Cortex-M/A 处理器崩溃报告。你的分析应该：
+
+1. 结合寄存器状态和代码逻辑推理崩溃原因
+2. 从调用链推断执行路径和出错环节
+3. 给出具体可操作的排查建议
+4. 如果能判断修复方向，给出建议
+
+回答要简洁、有依据、可操作。不要泛泛而谈。
+
+## 崩溃摘要
+- 错误类型: Kernel panic: sysrq triggered crash ]---
+- 崩溃函数: 
+- 架构: unknown
+
+## 栈回溯
+  #00 unwind_backtrace
+  #01 show_stack+0x10/0x14
+  #02 show_stack
+  #03 dump_stack+0xb0/0xc4
+  #04 dump_stack
+  #05 panic+0x11c/0x31c
+  #06 panic
+  #07 sysrq_handle_reboot+0x0/0x8
+  #08 unwind_backtrace
+  #09 show_stack+0x10/0x14
+  #10 show_stack
+  #11 dump_stack+0xb0/0xc4
+  #12 dump_stack
+  #13 handle_IPI+0x41c/0x448
+  #14 handle_IPI
+  #15 gic_handle_irq+0x8c/0x90
+  #16 gic_handle_irq
+  #17 __irq_svc+0x6c/0xa8
+  #18 __irq_svc
+  #19 arch_cpu_idle+0x38/0x3c
+
+## 分析任务
+请分析以上内核崩溃报告，输出：
+1. **崩溃原因**：结合寄存器值和代码逻辑判断
+2. **崩溃位置**：具体函数和代码行的作用
+3. **调用路径分析**：从栈回溯推断执行路径
+4. **排查建议**：具体可操作的步骤
+5. **可能的修复方向**

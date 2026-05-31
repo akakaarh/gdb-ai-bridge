@@ -1,0 +1,26 @@
+echo c > /proc/sysrq-trigger
+[ 2378.644208] sysrq: Trigger a crash
+[ 2378.646488] Kernel panic - not syncing: sysrq triggered crash
+[ 2378.652078] CPU: 1 PID: 855 Comm: sh Tainted: G            E     5.4.31-g886e225be #1
+[ 2378.659915] Hardware name: STM32 (Device Tree Support)
+[ 2378.665088] [<c01124dc>] (unwind_backtrace) from [<c010d77c>] (show_stack+0x10/0x14)
+[ 2378.672828] [<c010d77c>] (show_stack) from [<c0cb6cd4>] (dump_stack+0xb0/0xc4)
+[ 2378.680065] [<c0cb6cd4>] (dump_stack) from [<c0125b18>] (panic+0x11c/0x31c)
+[ 2378.687039] [<c0125b18>] (panic) from [<c0641738>] (sysrq_handle_reboot+0x0/0x8)
+[ 2378.694451] CPU0: stopping
+[ 2378.697148] CPU: 0 PID: 0 Comm: swapper/0 Tainted: G            E     5.4.31-g886e225be #1
+[ 2378.705424] Hardware name: STM32 (Device Tree Support)
+[ 2378.710581] [<c01124dc>] (unwind_backtrace) from [<c010d77c>] (show_stack+0x10/0x14)
+[ 2378.718334] [<c010d77c>] (show_stack) from [<c0cb6cd4>] (dump_stack+0xb0/0xc4)
+[ 2378.725570] [<c0cb6cd4>] (dump_stack) from [<c0110f10>] (handle_IPI+0x41c/0x448)
+[ 2378.732980] [<c0110f10>] (handle_IPI) from [<c05acd98>] (gic_handle_irq+0x8c/0x90)
+[ 2378.740560] [<c05acd98>] (gic_handle_irq) from [<c0101a8c>] (__irq_svc+0x6c/0xa8)
+[ 2378.748050] Exception stack(0xc1201f40 to 0xc1201f88)
+[ 2378.753115] 1f40: 00000000 0020a02c e765e074 c011b740 00000000 c1200000 c1204ea8 c1204ee8
+[ 2378.761308] 1f60: 00000001 c116ea40 e7fffdc0 00000000 00000000 c1201f90 c010a1a4 c010a1a8
+[ 2378.769496] 1f80: 600b0013 ffffffff
+[ 2378.772992] [<c0101a8c>] (__irq_svc) from [<c010a1a8>] (arch_cpu_idle+0x38/0x3c)
+[ 2378.780403] [<c010a1a8>] (arch_cpu_idle) from [<c01582b4>] (do_idle+0xc4/0x14c)
+[ 2378.787723] [<c01582b4>] (do_idle) from [<c0158628>] (cpu_startup_entry+0x18/0x20)
+[ 2378.795305] [<c0158628>] (cpu_startup_entry) from [<c1100f10>] (start_kernel+0x4bc/0x4f4)
+[ 2378.803502] ---[ end Kernel panic - not syncing: sysrq triggered crash ]---
