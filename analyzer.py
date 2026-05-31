@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from parser import parse, OopsInfo
-from enricher import enrich, EnrichedContext, format_context
+from enricher import enrich, EnrichedContext, context_to_text
 
 
 SYSTEM_PROMPTS = {
@@ -205,7 +205,7 @@ def build_prompt(oops: OopsInfo, ctx: EnrichedContext, target_type: str = "gener
         parts.append("")
 
     # Enriched context
-    enriched_text = format_context(ctx)
+    enriched_text = context_to_text(ctx)
     if enriched_text:
         parts.append(enriched_text)
         parts.append("")

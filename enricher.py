@@ -1,6 +1,7 @@
 """Enricher — supplements oops info with kernel-index symbol data and wiki context."""
 
 import json
+import os
 import sqlite3
 import subprocess
 from dataclasses import dataclass, field
@@ -28,7 +29,18 @@ class EnrichedContext:
     wiki_snippets: list[str] = field(default_factory=list)
 
 
-DB_PATH = "E:/projects/kernel-code-index/kernel_index.db"
+DB_PATH = os.environ.get("KERNEL_INDEX_DB", "")
+if not DB_PATH:
+    # Try common locations
+    _candidates = [
+        os.path.expanduser("~/.kernel-index/kernel_index.db"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel_index.db"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "kernel-code-index", "kernel_index.db"),
+    ]
+    for _c in _candidates:
+        if os.path.exists(_c):
+            DB_PATH = _c
+            break
 
 
 def enrich(oops: OopsInfo, db_path: str = DB_PATH) -> EnrichedContext:
@@ -155,7 +167,7 @@ def _search_wiki(oops: OopsInfo) -> list[str]:
     return snippets[:5]
 
 
-def format_context(ctx: EnrichedContext) -> str:
+def context_to_text(ctx: EnrichedContext) -> str:
     """Format enriched context as readable text for prompt assembly."""
     parts = []
 

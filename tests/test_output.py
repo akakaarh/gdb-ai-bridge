@@ -6,7 +6,7 @@ import tempfile
 import pytest
 
 from gdb_bridge.collector import DebugContext
-from gdb_bridge.output import format_context, save_context, print_context
+from gdb_bridge.output import context_to_dict, save_context, print_context
 
 
 # ---------------------------------------------------------------------------
@@ -25,18 +25,18 @@ def _make_context(**overrides):
 
 
 # ---------------------------------------------------------------------------
-# format_context
+# context_to_dict
 # ---------------------------------------------------------------------------
 
-class TestFormatContext:
+class TestContextToDict:
     def test_returns_dict(self):
         ctx = _make_context()
-        result = format_context(ctx)
+        result = context_to_dict(ctx)
         assert isinstance(result, dict)
 
     def test_has_all_top_level_keys(self):
         ctx = _make_context()
-        result = format_context(ctx)
+        result = context_to_dict(ctx)
         expected = {"version", "timestamp", "config", "layer0", "layer1", "layer2", "errors"}
         assert set(result.keys()) == expected
 
@@ -46,7 +46,7 @@ class TestFormatContext:
             layer0={"status": "ok", "registers": {"a0": {"value": "0xABCD"}}},
             errors=["some warning"],
         )
-        result = format_context(ctx)
+        result = context_to_dict(ctx)
 
         assert result["config"]["arch"] == "riscv32"
         assert result["layer0"]["registers"]["a0"]["value"] == "0xABCD"
@@ -54,7 +54,7 @@ class TestFormatContext:
 
     def test_json_serializable(self):
         ctx = _make_context()
-        result = format_context(ctx)
+        result = context_to_dict(ctx)
         # Should not raise
         json.dumps(result)
 

@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest.mock import MagicMock
 from parser import OopsInfo
-from enricher import enrich, EnrichedContext, format_context, SymbolInfo
+from enricher import enrich, EnrichedContext, context_to_text, SymbolInfo
 
 
 class TestEnrich:
@@ -18,10 +18,10 @@ class TestEnrich:
         assert ctx.crash_symbol is None
 
 
-class TestFormatContext:
+class TestContextToText:
     def test_empty_context(self):
         ctx = EnrichedContext()
-        text = format_context(ctx)
+        text = context_to_text(ctx)
         assert text == ""
 
     def test_with_crash_symbol(self):
@@ -35,7 +35,7 @@ class TestFormatContext:
             signature="(void)",
         )
         ctx.crash_symbol = sym
-        text = format_context(ctx)
+        text = context_to_text(ctx)
         assert "test_func" in text
         assert "test.c" in text
         assert "42" in text
@@ -46,13 +46,13 @@ class TestFormatContext:
             SymbolInfo(name="caller_a", file="a.c", line=10),
             SymbolInfo(name="caller_b", file="b.c", line=20),
         ]
-        text = format_context(ctx)
+        text = context_to_text(ctx)
         assert "caller_a" in text
         assert "caller_b" in text
 
     def test_with_wiki_snippets(self):
         ctx = EnrichedContext()
         ctx.wiki_snippets = ["snippet one", "snippet two"]
-        text = format_context(ctx)
+        text = context_to_text(ctx)
         assert "snippet one" in text
         assert "snippet two" in text
