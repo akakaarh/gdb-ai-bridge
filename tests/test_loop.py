@@ -118,6 +118,20 @@ class TestSafetyLimits:
         assert result["status"] in ("max_iterations", "stagnation")
 
 
+class TestValidation:
+    def test_invalid_action_rejected(self):
+        """非法 action 应被拦截，不执行"""
+        loop = make_loop(expected={"serial_contains": "NEVER"})
+        # 返回一个非法 action（未知动作名）
+        loop._get_ai_action = lambda ctx: {"action": "invalid_action_name"}
+        result = loop.run()
+        # 应该停滞或达到最大迭代，但不会执行非法命令
+        assert result["status"] in ("stagnation", "max_iterations")
+        # 检查 history 中有 error 记录
+        errors = [h for h in loop.history if "error" in h]
+        assert len(errors) > 0
+
+
 class TestHistory:
     def test_history_recorded(self):
         loop = make_loop(expected={"serial_contains": "OK"})

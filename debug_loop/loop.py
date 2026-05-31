@@ -56,8 +56,9 @@ class DebugLoop:
                 continue
 
             # 6. Validate and execute
-            if not validate_action(action):
-                self.history.append({"action": action, "error": "invalid action"})
+            ok, err = validate_action(action)
+            if not ok:
+                self.history.append({"action": action, "error": err})
                 continue
 
             gdb_cmd, err = translate_action(action)
