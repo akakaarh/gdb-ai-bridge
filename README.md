@@ -62,15 +62,24 @@ arm-none-eabi-gdb-py3
 (gdb) ai exec info registers  # 执行 GDB 命令
 ```
 
+HTTP API 端点：
+
+| 方法 | 路径 | 说明 | 请求体 |
+|------|------|------|--------|
+| GET | `/health` | 健康检查 | — |
+| GET | `/state` | 获取 GDB 状态 | — |
+| POST | `/execute` | 执行 GDB 命令 | `{"command": "info registers"}` |
+
 Python 客户端调用：
 ```python
 from debug_loop.gdb_client import GDBClient
 
 client = GDBClient(port=9999)
 print(client.health())           # {'ok': True}
+print(client.get_state())        # {'status': 'stopped', 'pc': '0x...', 'arch': 'armv7e-m'}
 print(client.read_all_registers())
-print(client.get_state())
-print(client.backtrace())
+print(client.execute("backtrace"))
+print(client.backtrace())        # 便捷方法，等价于 execute("backtrace")
 ```
 
 串口监听：
