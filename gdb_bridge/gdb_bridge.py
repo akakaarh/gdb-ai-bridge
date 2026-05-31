@@ -415,6 +415,130 @@ def _print_crash_report(data):
 
 
 # ---------------------------------------------------------------------------
+# HTTP Server for external command execution
+# ---------------------------------------------------------------------------
+
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+_server_instance = None
+
+
+class _GDBRequestHandler(BaseHTTPRequestHandler):
+    """HTTP handler that executes GDB commands."""
+
+    def log_message(self, format, *args):
+        pass  # Suppress HTTP logs in GDB console
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._json_response({"ok": True})
+        else:
+            self._json_response({"error": "Not found"}, 404)
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        if self.path == "/execute":
+            self._handle_execute(data)
+        elif self.path == "/state":
+            self._handle_state()
+        else:
+            self._json_response({"error": "Not found"}, 404)
+
+    def _handle_execute(self, data):
+        command = data.get("command", "")
+        if not command:
+            self._json_response({"error": "Missing 'command'"}, 400)
+            return
+
+        try:
+            output = _gdb.execute(command, to_string=True)
+            self._json_response({"output": output})
+        except Exception as e:
+            self._json_response({"error": str(e)})
+
+    def _handle_state(self):
+        try:
+            frame = _gdb.selected_frame()
+            pc = int(frame.read_register("pc"))
+            state = {
+                "status": "stopped",
+                "pc": f"0x{pc:08x}",
+                "arch": frame.architecture().name(),
+            }
+            # Check if target is running
+            try:
+                _gdb.execute("info thread", to_string=True)
+                state["connected"] = True
+            except Exception:
+                state["connected"] = False
+        except Exception:
+            state = {"status": "unknown"}
+
+        self._json_response(state)
+
+    def _json_response(self, data, code=200):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+
+class AIServeCommand(_gdb.Command if _gdb else object):
+    """Start HTTP API server. Usage: ai serve [port]"""
+
+    def __init__(self):
+        if _gdb:
+            super().__init__("ai serve", _gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        global _server_instance
+
+        if _server_instance:
+            _gdb.write(f"[AI Serve] Already running on port {_server_instance.server_address[1]}\n")
+            return
+
+        port = int(arg.strip()) if arg.strip() else 9999
+
+        try:
+            _server_instance = HTTPServer(("localhost", port), _GDBRequestHandler)
+            thread = threading.Thread(target=_server_instance.serve_forever, daemon=True)
+            thread.start()
+            _gdb.write(f"[AI Serve] HTTP API running on http://localhost:{port}\n")
+            _gdb.write(f"[AI Serve] Endpoints: POST /execute, POST /state, GET /health\n")
+        except Exception as e:
+            _gdb.write(f"[AI Serve] Error: {e}\n")
+
+
+class AIExecCommand(_gdb.Command if _gdb else object):
+    """Execute GDB command. Usage: ai exec <command>"""
+
+    def __init__(self):
+        if _gdb:
+            super().__init__("ai exec", _gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        if not arg.strip():
+            _gdb.write("Usage: ai exec <gdb_command>\n")
+            return
+        try:
+            output = _gdb.execute(arg.strip(), to_string=True)
+            _gdb.write(output)
+            if not output.endswith("\n"):
+                _gdb.write("\n")
+        except Exception as e:
+            _gdb.write(f"Error: {e}\n")
+
+
+# ---------------------------------------------------------------------------
 # Register commands
 # ---------------------------------------------------------------------------
 
@@ -426,4 +550,6 @@ if _gdb:
     AIInfoCommand()
     AIAutoCommand()
     AIReportCommand()
+    AIServeCommand()
+    AIExecCommand()
     _gdb.write("GDB-AI Bridge loaded. Use 'ai info' to get started.\n")
