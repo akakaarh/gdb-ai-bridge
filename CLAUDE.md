@@ -1,96 +1,80 @@
 # GDB-AI Bridge — GDB 调试与 AI 的桥接系统
 
+## 项目状态：已完成 ✅
+
+GitHub: https://github.com/akakaarh/gdb-ai-bridge
+187 个测试，16 个 commit，Phase 1-4 全部实现。
+
 ## 项目目标
 
 将 GDB 调试会话的上下文（寄存器、栈回溯、变量、内存）实时传递给 LLM，让 AI 能够辅助分析内核崩溃、驱动异常等调试场景。
 
-## 核心问题
+## 核心能力
 
-嵌入式调试高度依赖 GDB + JTAG/SWD，但 GDB 的输出是纯文本，信息密度高但人类阅读慢。AI 擅长分析结构化数据，但目前无法直接接入调试会话。
+### Phase 1：离线分析
+- `parser.py` — 解析 ARM32/ARM64 oops log，提取寄存器、栈回溯、崩溃函数
+- `enricher.py` — 从 kernel-index SQLite 查询符号定义、调用链
+- `analyzer.py` — 构建 AI 分析 prompt（支持 baremetal/linux/generic 三种目标）
 
-## 要解决的问题
+### Phase 2：GDB 自动采集
+- `gdb_bridge/gdb_bridge.py` — GDB Python 扩展，9 个命令
+- `gdb_bridge/collector.py` — 分层采集（L0: 寄存器, L1: 栈/变量, L2: 完整 dump）
+- `gdb_bridge/arch/arm.py` — Cortex-M SCB/CFSR/HFSR 故障解码
+- `gdb_bridge/target/baremetal.py` — 裸机帧链遍历
+- `gdb_bridge/target/linux.py` — Linux 内核 bt 解析
 
-- 内核 oops 了 → AI 分析栈回溯，定位到具体驱动和代码行
-- HardFault → AI 结合寄存器状态判断是内存越界、空指针还是权限问题
-- 变量值异常 → AI 追踪变量的赋值链路，找到异常来源
-- 中断丢失 → AI 分析中断控制器寄存器状态
+### Phase 3：结果回传
+- `ai report <file>` — 在 GDB 中显示结构化崩溃报告
+- `ai auto on` — 崩溃时自动采集 + 保存 JSON + 打印报告
 
-## 技术方向
+### Phase 4：AI 双向控制
+- `ai serve [port]` — GDB HTTP API（/health, /state, /execute）
+- `debug_loop/` — AI 调试循环（串口监听 + GDB 控制 + 安全限制）
+- 结构化动作系统（12 种动作，白名单安全机制）
 
-1. **GDB Python 扩展**：编写 GDB Python 脚本，在断点/oops 时自动采集调试上下文
-2. **上下文序列化**：将寄存器、栈帧、变量、内存 dump 结构化为 JSON
-3. **LLM 分析**：将结构化上下文 + 源码片段发送给 Claude API 进行分析
-4. **双向交互**：AI 可以通过 GDB 远程协议读取寄存器、设置断点（进阶）
+### MCP Server
+- `mcp_server.py` — 5 个 MCP 工具（parse_oops, analyze_crash, list_actions, translate_action, get_system_prompt）
 
-## 架构设想
+### Skill
+- `skills/analyze-crash.md` — Claude Code skill，粘贴 oops log 自动触发分析
 
-```
-目标板 (ARM/RISC-V)
-    ↕ JTAG/SWD
-OpenOCD / J-Link GDB Server
-    ↕ GDB Remote Protocol
-GDB + Python Extension
-    ↕ 采集调试上下文
-Bridge Server (Python)
-    ↕ Claude API
-AI 分析 → 自然语言报告
-```
+## GDB 命令
 
-## 竞品调研（2026-05）
+| 命令 | 说明 |
+|------|------|
+| `ai config arch <a> target <t>` | 配置架构和目标类型 |
+| `ai collect [--full]` | 手动采集上下文 |
+| `ai dump <file>` | 采集并保存到 JSON |
+| `ai report <file>` | 在 GDB 中显示崩溃报告 |
+| `ai auto on\|off` | 崩溃自动采集开关 |
+| `ai serve [port]` | 启动 HTTP API |
+| `ai exec <cmd>` | 执行 GDB 命令 |
 
-**结论：MCP 是主流路径，但都不够嵌入式。**
+## 技术栈
 
-已有的 GDB MCP 项目：
-- **yywz1999/gdb-mcp-server** (83 star) — 最热门的 GDB MCP server
-  - https://github.com/yywz1999/gdb-mcp-server
-- **pansila/mcp_server_gdb** (65 star) — Rust 实现，稳定
-  - https://github.com/pansila/mcp_server_gdb
-- **smadi0x86/MDB-MCP** (61 star) — 支持 GDB + LLDB
-  - https://github.com/smadi0x86/MDB-MCP
-- **baidxi/mcp_for_gdbserver** (5 star) — 唯一针对远程嵌入式调试的
-  - https://github.com/baidxi/mcp_for_gdbserver
-- **karellen/karellen-rr-mcp** (3 star) — rr 时间回溯调试 MCP
-  - https://github.com/karellen/karellen-rr-mcp
+- Python 3.10+，无第三方依赖（pyserial 可选）
+- GDB Python API（需带 Python 支持的 GDB）
+- OpenOCD / J-Link / pyOCD（调试服务器）
+- FastMCP（MCP server）
+- Claude Code（AI 分析）
 
-空白地带（我们的切入点）：
-- 没有专门的内核 oops AI 分析器
-- 没有 ARM/RISC-V 寄存器语义理解
-- 没有内核 crash log 的 RAG 管道
-- 没有 GDB Python 扩展专门预处理调试上下文供 LLM 消费
-- 架构参考：LLM ↔ MCP server ↔ GDB/MI ↔ 目标板
+## 适用场景
 
-## 关键文件/工具
+- ARM Cortex-M/A 内核崩溃分析
+- HardFault 故障诊断（CFSR 位域解码）
+- Linux 内核 oops 栈回溯解读
+- 驱动 probe 失败分析
+- 嵌入式调试自动化
 
-- GDB Python API（gdb module）
-- OpenOCD / J-Link GDB Server
-- Claude API（Anthropic SDK）
-- 现有 GDB MCP 项目（参考架构，可复用部分代码）
-- Python HTTP/WebSocket server 做中间桥接
+## 不限于 STM32MP157
 
-## 阶段规划
+架构适配器模式支持任何芯片：
+- 换 OpenOCD 配置 + `ai config arch target` 即可
+- 已验证：STM32MP157 (Cortex-A7 + Cortex-M4)
+- 支持：任何 ARM Cortex-M/A、任何 OpenOCD/J-Link 支持的芯片
 
-### Phase 1：离线分析 MVP
-- 手动粘贴 oops log / GDB 输出
-- AI 解析栈回溯，结合代码库给出分析
-- 这一步不需要 GDB 扩展，纯 prompt engineering
+## 关键文件
 
-### Phase 2：GDB Python 扩展
-- 编写 GDB Python 脚本，自动采集上下文
-- 在断点命中 / oops 发生时触发采集
-- 输出结构化 JSON
-
-### Phase 3：实时桥接
-- Bridge Server 连接 GDB 和 Claude API
-- 支持自动触发分析
-- AI 的分析结果回传到 GDB 注释中
-
-### Phase 4：双向控制（进阶）
-- AI 可以发送 GDB 命令（读寄存器、设断点、step）
-- 实现 AI 驱动的自动化调试流程
-- 需要严格的安全限制，防止 AI 执行破坏性命令
-
-## 验证方式
-
-- 能解析一个真实的内核 oops log 并给出准确的崩溃位置
-- GDB 扩展能在断点处自动采集上下文并输出 JSON
-- AI 分析结果包含：崩溃原因、涉及的代码路径、建议的排查方向
+- `E:/projects/gdb-ai-bridge/` — 项目根目录
+- `E:/projects/kernel-code-index/` — 内核符号索引（drivers/gpio 子系统）
+- `E:\Wiki\embedded\` — 嵌入式知识库（90 篇文档）
