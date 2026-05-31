@@ -40,7 +40,7 @@ class GDBClient:
 
     def get_state(self):
         """Get current GDB/target state."""
-        return self._request("/state")
+        return self._request("/state", data=None)
 
     # High-level convenience methods
 

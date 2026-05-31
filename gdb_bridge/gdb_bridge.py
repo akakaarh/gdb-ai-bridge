@@ -433,6 +433,8 @@ class _GDBRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._json_response({"ok": True})
+        elif self.path == "/state":
+            self._handle_state()
         else:
             self._json_response({"error": "Not found"}, 404)
 
