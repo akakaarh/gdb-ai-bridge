@@ -251,6 +251,53 @@ print(result)  # {'status': 'success', 'reason': '...', 'iterations': 3}
 | GET | `/state` | 获取 GDB 状态 | — |
 | POST | `/execute` | 执行 GDB 命令 | `{"command": "info registers"}` |
 
+## MCP Server
+
+内置 MCP server，让 AI agent 直接调用分析工具。
+
+```bash
+# 启动（stdio 模式）
+python mcp_server.py
+
+# 或在 Claude Code 中配置（.mcp.json 已自动生成）
+```
+
+### MCP 工具
+
+| 工具 | 说明 |
+|------|------|
+| `parse_oops` | 解析 oops log / GDB JSON → 结构化数据 |
+| `analyze_crash` | 完整分析管线（解析 + enrich + prompt 生成） |
+| `list_actions` | 列出可用的调试动作（12 种） |
+| `translate_action` | 结构化动作 → GDB 命令 |
+| `get_system_prompt` | 获取目标类型的系统提示 |
+
+### 在 Claude Code 中使用
+
+将以下内容添加到 Claude Code 的 MCP 配置（`.claude/settings.json`）：
+
+```json
+{
+  "mcpServers": {
+    "gdb-ai-bridge": {
+      "command": "python",
+      "args": ["/path/to/gdb-ai-bridge/mcp_server.py"]
+    }
+  }
+}
+```
+
+## Skill
+
+Claude Code 内置 skill，粘贴 oops log 自动触发分析。
+
+文件：`skills/analyze-crash.md`
+
+触发条件：
+- 用户粘贴内核 oops log 或 panic 输出
+- 提到 "kernel panic"、"HardFault"、"oops"、"crash analysis"
+- 有 GDB bridge JSON 文件需要分析
+
 ## 文件结构
 
 ```
@@ -258,6 +305,7 @@ gdb-ai-bridge/
 ├── parser.py              # oops log 解析器（ARM32/ARM64）
 ├── enricher.py            # kernel-index 符号查询
 ├── analyzer.py            # AI 分析 prompt 构建
+├── mcp_server.py          # MCP server（5 个工具）
 ├── gdb_bridge/            # GDB Python 扩展
 │   ├── gdb_bridge.py      # GDB 命令注册 + HTTP API
 │   ├── collector.py       # 分层采集器
@@ -271,6 +319,8 @@ gdb-ai-bridge/
 │   ├── evaluator.py       # 成功/失败判断
 │   ├── safety.py          # 安全限制
 │   └── actions.py         # 结构化动作
+├── skills/                # Claude Code skills
+│   └── analyze-crash.md   # 崩溃分析 skill
 ├── scripts/               # OpenOCD 配置示例
 └── tests/                 # 187 个测试
 ```
