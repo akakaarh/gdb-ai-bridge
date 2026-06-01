@@ -27,6 +27,11 @@ class EnrichedContext:
     crash_callees: list[SymbolInfo] = field(default_factory=list)
     stack_symbols: dict[str, SymbolInfo] = field(default_factory=dict)
     wiki_snippets: list[str] = field(default_factory=list)
+    source_context: str = ""
+    file_functions: list[str] = field(default_factory=list)
+
+
+MAX_SOURCE_LINES = 50
 
 
 DB_PATH = os.environ.get("KERNEL_INDEX_DB", "")
@@ -42,8 +47,14 @@ if not DB_PATH:
             DB_PATH = _c
             break
 
+KERNEL_ROOT = os.environ.get("KERNEL_SOURCE_ROOT", "")
 
-def enrich(oops: OopsInfo, db_path: str = DB_PATH) -> EnrichedContext:
+
+def enrich(
+    oops: OopsInfo,
+    db_path: str = DB_PATH,
+    kernel_root: str = KERNEL_ROOT,
+) -> EnrichedContext:
     """Enrich oops info with symbol data and wiki context."""
     ctx = EnrichedContext()
 
@@ -71,9 +82,16 @@ def enrich(oops: OopsInfo, db_path: str = DB_PATH) -> EnrichedContext:
             if sym:
                 ctx.stack_symbols[name] = sym
 
+    # 4. Source code context near crash function
+    ctx.source_context = _get_source_context(conn, ctx.crash_symbol, kernel_root)
+
+    # 5. Other functions in the same file as the crash function
+    if ctx.crash_symbol and ctx.crash_symbol.file:
+        ctx.file_functions = _get_file_functions(conn, ctx.crash_symbol.file)
+
     conn.close()
 
-    # 4. Wiki context
+    # 6. Wiki context
     ctx.wiki_snippets = _search_wiki(oops)
 
     return ctx
@@ -143,6 +161,66 @@ def _get_callees(conn: sqlite3.Connection, func_name: str) -> list[SymbolInfo]:
     ]
 
 
+def _get_source_context(
+    conn: sqlite3.Connection,
+    crash_symbol: SymbolInfo | None,
+    kernel_root: str = "",
+) -> str:
+    """Extract source code near the crash function (±10 lines).
+
+    Returns the source context as a string with line numbers, or empty string
+    if the source file is unavailable (e.g., remote debugging scenario).
+    """
+    if not crash_symbol or not crash_symbol.file or crash_symbol.line <= 0:
+        return ""
+
+    source_path = crash_symbol.file
+    if kernel_root:
+        source_path = os.path.join(kernel_root, crash_symbol.file)
+
+    try:
+        with open(source_path, encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+    except (OSError, IOError):
+        return ""
+
+    func_line = crash_symbol.line  # 1-indexed
+    start = max(0, func_line - 11)  # 10 lines before (0-indexed)
+    end = min(len(all_lines), func_line + 10)  # 10 lines after
+
+    selected = all_lines[start:end]
+
+    # Truncate to MAX_SOURCE_LINES
+    if len(selected) > MAX_SOURCE_LINES:
+        selected = selected[:MAX_SOURCE_LINES]
+
+    # Format with line numbers (1-indexed)
+    result_lines = []
+    for i, line in enumerate(selected, start=start + 1):
+        result_lines.append(f"{i}: {line.rstrip()}")
+
+    return "\n".join(result_lines)
+
+
+def _get_file_functions(conn: sqlite3.Connection, file_path: str) -> list[str]:
+    """Return function signatures defined in the given file, limited to 20."""
+    rows = conn.execute(
+        """SELECT s.name, s.typeref, s.signature, s.line
+           FROM symbols s
+           JOIN files f ON s.file_id = f.id
+           WHERE f.path = ? AND s.kind = 'function'
+           ORDER BY s.line
+           LIMIT 20""",
+        (file_path,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        typeref = (r[1] or "").removeprefix("typename:")
+        sig = r[2] or ""
+        result.append(f"{typeref} {r[0]}{sig}")
+    return result
+
+
 def _search_wiki(oops: OopsInfo) -> list[str]:
     """Search wiki for relevant context using qmd CLI."""
     snippets = []
@@ -200,5 +278,14 @@ def context_to_text(ctx: EnrichedContext) -> str:
         parts.append("## Related Wiki Knowledge")
         for s in ctx.wiki_snippets:
             parts.append(f"  - {s}")
+
+    if ctx.source_context:
+        parts.append("## Source Code Context (crash function)")
+        parts.append(ctx.source_context)
+
+    if ctx.file_functions:
+        parts.append("## File Functions (same file as crash function)")
+        for f in ctx.file_functions:
+            parts.append(f"  - {f}")
 
     return "\n".join(parts)

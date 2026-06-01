@@ -146,6 +146,8 @@ def build_prompt_from_json(data: dict) -> str:
 
     # Task
     parts.append("## 分析任务")
+    parts.append("注意：如果上下文中包含源代码（Source Code Context）和文件函数列表（File Functions），"
+                 "请结合源代码逻辑进行分析，而不仅仅依赖寄存器和调用链。")
     if target_type == "baremetal":
         parts.append("请分析以上嵌入式系统崩溃报告，输出：")
         parts.append("1. **崩溃原因**：结合 CFSR/HFSR 和寄存器值判断（HardFault/MemManage/BusFault/UsageFault）")
@@ -212,6 +214,8 @@ def build_prompt(oops: OopsInfo, ctx: EnrichedContext, target_type: str = "gener
 
     # Task
     parts.append("## 分析任务")
+    parts.append("注意：如果上下文中包含源代码（Source Code Context）和文件函数列表（File Functions），"
+                 "请结合源代码逻辑进行分析，而不仅仅依赖寄存器和调用链。")
     parts.append("请分析以上内核崩溃报告，输出：")
     parts.append("1. **崩溃原因**：结合寄存器值和代码逻辑判断")
     parts.append("2. **崩溃位置**：具体函数和代码行的作用")
