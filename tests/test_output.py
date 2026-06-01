@@ -37,7 +37,7 @@ class TestContextToDict:
     def test_has_all_top_level_keys(self):
         ctx = _make_context()
         result = context_to_dict(ctx)
-        expected = {"version", "timestamp", "config", "layer0", "layer1", "layer2", "errors"}
+        expected = {"version", "timestamp", "config", "layer0", "layer1", "layer2", "errors", "decoded_registers"}
         assert set(result.keys()) == expected
 
     def test_preserves_data(self):

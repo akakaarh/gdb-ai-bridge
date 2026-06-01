@@ -22,11 +22,15 @@ if _PARENT_DIR not in sys.path:
 
 try:
     import gdb as _gdb
+    # Verify gdb has the Command base class (not just a stub)
+    if not hasattr(_gdb, "Command"):
+        _gdb = None
 except ImportError:
     _gdb = None
 
 from gdb_bridge.collector import Collector, DebugContext
 from gdb_bridge.output import save_context, print_context
+from gdb_bridge.svd import SVDParser, RegisterDecoder
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +41,49 @@ _config = {
     "arch": None,
     "target": None,
     "elf_file": "",
+    "svd_file": "",
 }
+
+# SVD decoder (lazy-loaded)
+_svd_parser = None
+_svd_decoder = None
+
+
+def _read_mem32(address: int) -> int:
+    """Read a 32-bit value from memory via GDB.
+
+    Shared helper used by AIDecodeCommand and Collector.
+    Returns 0 on any failure.
+    """
+    if _gdb is None:
+        return 0
+    try:
+        frame = _gdb.selected_frame()
+        mem = frame.read_memory(address, 4)
+        return int(mem.cast(_gdb.lookup_type("uint32_t")))
+    except Exception:
+        return 0
+
+
+def _get_svd_decoder():
+    """Get or create the SVD register decoder."""
+    global _svd_parser, _svd_decoder
+    if _svd_decoder is not None:
+        return _svd_decoder
+
+    # Prefer config over env var
+    svd_path = _config.get("svd_file", "")
+    if not svd_path:
+        svd_path = os.environ.get("SVD_FILE", "")
+    if not svd_path:
+        return None
+
+    try:
+        _svd_parser = SVDParser(svd_path)
+        _svd_decoder = RegisterDecoder(_svd_parser)
+        return _svd_decoder
+    except Exception:
+        return None
 
 
 def _get_adapter(arch_name, target_name):
@@ -148,6 +194,7 @@ class AIConfigCommand(_gdb.Command if _gdb else object):
             super().__init__("ai config", _gdb.COMMAND_USER)
 
     def invoke(self, arg, from_tty):
+        global _svd_parser, _svd_decoder
         parts = arg.split()
         i = 0
         while i < len(parts):
@@ -156,6 +203,25 @@ class AIConfigCommand(_gdb.Command if _gdb else object):
                 i += 2
             elif parts[i] == "target" and i + 1 < len(parts):
                 _config["target"] = parts[i + 1]
+                i += 2
+            elif parts[i] == "svd" and i + 1 < len(parts):
+                svd_path = parts[i + 1]
+                # Validate file exists
+                if not os.path.isfile(svd_path):
+                    _gdb.write(f"Error: SVD file not found: {svd_path}\n")
+                    i += 2
+                    continue
+                # Reset cached decoder so it reloads with new file
+                _svd_parser = None
+                _svd_decoder = None
+                _config["svd_file"] = svd_path
+                # Eagerly load to report errors immediately
+                decoder = _get_svd_decoder()
+                if decoder is not None:
+                    n = len(_svd_parser.list_peripherals())
+                    _gdb.write(f"SVD loaded: {svd_path} ({n} peripherals)\n")
+                else:
+                    _gdb.write(f"Error: Failed to parse SVD file: {svd_path}\n")
                 i += 2
             else:
                 _gdb.write(f"Unknown config: {parts[i]}\n")
@@ -178,6 +244,19 @@ class AIInfoCommand(_gdb.Command if _gdb else object):
         _gdb.write(f"  Python: {sys.version.split()[0]}\n")
         _gdb.write(f"  GDB:    {getattr(_gdb, 'VERSION', 'unknown')}\n")
         _gdb.write(f"  Auto:   {'ON' if _auto_mode['enabled'] else 'off'}\n")
+
+        # SVD status
+        svd_path = _config.get("svd_file", "") or os.environ.get("SVD_FILE", "")
+        if svd_path:
+            decoder = _get_svd_decoder()
+            if decoder is not None and _svd_parser is not None:
+                n = len(_svd_parser.list_peripherals())
+                _gdb.write(f"  SVD:    {svd_path} ({n} peripherals, active)\n")
+            else:
+                _gdb.write(f"  SVD:    {svd_path} (failed to load)\n")
+        else:
+            _gdb.write(f"  SVD:    (not set)\n")
+
         _gdb.write("====================\n")
 
 
@@ -540,6 +619,48 @@ class AIExecCommand(_gdb.Command if _gdb else object):
             _gdb.write(f"Error: {e}\n")
 
 
+class AIDecodeCommand(_gdb.Command if _gdb else object):
+    """Decode peripheral registers using SVD. Usage: ai decode <address> [count]"""
+
+    def __init__(self):
+        if _gdb:
+            super().__init__("ai decode", _gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        decoder = _get_svd_decoder()
+        if decoder is None:
+            _gdb.write("Error: No SVD file loaded. Use 'ai config svd <path>' or set SVD_FILE env var.\n")
+            return
+
+        parts = arg.strip().split()
+        if not parts:
+            _gdb.write("Usage: ai decode <address> [count]\n")
+            return
+
+        try:
+            address = int(parts[0], 0)
+        except ValueError:
+            _gdb.write(f"Error: Invalid address: {parts[0]}\n")
+            return
+
+        count = 1
+        if len(parts) > 1:
+            try:
+                count = int(parts[1], 0)
+            except ValueError:
+                _gdb.write(f"Error: Invalid count: {parts[1]}\n")
+                return
+
+        for i in range(count):
+            addr = address + i * 4
+            value = _read_mem32(addr)
+            if value == 0:
+                # Could be actual 0 or read error; decode either way
+                pass
+            result = decoder.decode(addr, value)
+            _gdb.write(result + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Register commands
 # ---------------------------------------------------------------------------
@@ -554,4 +675,5 @@ if _gdb:
     AIReportCommand()
     AIServeCommand()
     AIExecCommand()
+    AIDecodeCommand()
     _gdb.write("GDB-AI Bridge loaded. Use 'ai info' to get started.\n")
