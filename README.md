@@ -42,22 +42,6 @@ adapter speed 4000
 source [find target/stm32f4x.cfg]
 ```
 
-```cfg
-# nrf52.cfg — Nordic nRF52 系列
-adapter driver jlink
-transport select swd
-adapter speed 4000
-source [find target/nrf52.cfg]
-```
-
-```cfg
-# rp2040.cfg — Raspberry Pi Pico
-adapter driver cmsis-dap
-transport select swd
-adapter speed 4000
-source [find target/rp2040.cfg]
-```
-
 启动：
 ```bash
 openocd -f your_config.cfg
@@ -67,12 +51,9 @@ openocd -f your_config.cfg
 #### J-Link GDB Server
 
 ```bash
-# 启动（GUI 或命令行）
 JLinkGDBServer -device STM32F407VG -if SWD -speed 4000
 # 默认监听端口 2331
 ```
-
-GDB 连接时用 `target remote localhost:2331`。
 
 #### pyOCD
 
@@ -83,8 +64,6 @@ pyocd gdbserver --target stm32f407vg --frequency 4000000
 ```
 
 ### GDB 配置
-
-#### 带 Python 支持的 GDB
 
 | 工具链 | GDB 命令 | Python 支持 | 安装 |
 |--------|----------|-------------|------|
@@ -101,114 +80,62 @@ arm-none-eabi-gdb-py3 --batch -ex "python print('OK')"
 
 ### 芯片适配
 
-#### 通用流程（适用所有芯片）
-
 ```gdb
-# 1. 启动调试服务器（OpenOCD/J-Link/pyOCD）
+# 1. 启动调试服务器
 # 2. 连接 GDB
 (gdb) target remote localhost:3333
-
 # 3. 加载 bridge
 (gdb) source /path/to/gdb_bridge/gdb_bridge.py
-
 # 4. 配置架构和目标类型
-(gdb) ai config arch arm target baremetal    # Cortex-M 裸机
-(gdb) ai config arch arm target linux         # Cortex-A Linux
-(gdb) ai config arch arm64 target linux       # AArch64 Linux
-
+(gdb) ai config arch arm target baremetal
 # 5. 加载符号文件
-(gdb) file your_firmware.elf                  # 裸机
-(gdb) add-symbol-file vmlinux                 # Linux 内核
-
+(gdb) file your_firmware.elf
 # 6. 使用
 (gdb) ai collect
 (gdb) ai dump crash.json
 ```
 
-#### 架构选项
+| 架构 | 适用芯片 | 特殊功能 |
+|------|----------|----------|
+| `arm` | Cortex-M/A (32-bit) | SCB/CFSR/HFSR 解码 |
+| `arm64` | Cortex-A (64-bit) | — |
 
-| 架构 | 适用芯片 | 寄存器 | 特殊功能 |
-|------|----------|--------|----------|
-| `arm` | Cortex-M0/M3/M4/M7/M33, Cortex-A7/A9 (32-bit) | R0-R15, xPSR | SCB/CFSR/HFSR 解码（Cortex-M） |
-| `arm64` | Cortex-A53/A72/A76 (64-bit) | X0-X30, SP, PSTATE | — |
-
-#### 目标类型选项
-
-| 目标 | 说明 | 栈回溯方式 |
-|------|------|-----------|
-| `baremetal` | 裸机 / RTOS（FreeRTOS、Zephyr） | GDB frame chain 遍历 |
-| `linux` | Linux 内核 | GDB bt + kallsyms |
-
-### 串口配置（Phase 4 需要）
-
-```python
-from debug_loop.serial_monitor import SerialMonitor
-
-# 查看可用串口
-import serial.tools.list_ports
-for p in serial.tools.list_ports.comports():
-    print(f"{p.device}: {p.description}")
-
-# 连接（按实际端口和波特率修改）
-mon = SerialMonitor("COM3", 115200)  # Windows
-mon = SerialMonitor("/dev/ttyUSB0", 115200)  # Linux
-mon.start()
-```
-
-### 安全内存区域（可选）
-
-如果需要 MMIO 保护（防止读取外设寄存器产生副作用），在 `collector.py` 中配置：
-
-```python
-# 按你的芯片修改
-collector.set_safe_regions([
-    (0x20000000, 0x20020000),  # SRAM
-    (0x08000000, 0x08100000),  # Flash
-])
-```
-
-或从 ELF 自动解析：
-```python
-collector.load_safe_regions_from_elf("firmware.elf")
-```
+| 目标 | 说明 |
+|------|------|
+| `baremetal` | 裸机 / RTOS |
+| `linux` | Linux 内核 |
 
 ## 使用方式
 
 ### Phase 1：离线分析
 
 ```bash
-# 分析 oops log
 python analyzer.py oops.txt
-
-# 分析 GDB bridge JSON
 python analyzer.py crash.json
-
-# 输出到文件
-python analyzer.py oops.txt -o prompt.txt
 ```
 
 ### Phase 2：GDB 自动采集
 
 ```gdb
 (gdb) ai config arch arm target baremetal
-(gdb) ai collect                    # 打印到控制台
-(gdb) ai dump crash.json            # 保存到文件
-(gdb) ai report crash.json          # 在 GDB 中显示报告
+(gdb) ai collect
+(gdb) ai dump crash.json
+(gdb) ai report crash.json
 ```
 
 ### Phase 3：崩溃自动采集
 
 ```gdb
-(gdb) ai auto on --dir ./crashes    # 启用
-(gdb) continue                       # 运行
+(gdb) ai auto on --dir ./crashes
+(gdb) continue
 # 崩溃时自动：采集 → 保存 JSON → 打印报告
-(gdb) ai auto off                    # 禁用
+(gdb) ai auto off
 ```
 
 ### Phase 4：AI 双向控制
 
 ```gdb
-(gdb) ai serve 9999                 # 启动 HTTP API
+(gdb) ai serve 9999
 ```
 
 ```python
@@ -227,8 +154,60 @@ loop = DebugLoop(
     gdb_client=client,
 )
 result = loop.run()
-print(result)  # {'status': 'success', 'reason': '...', 'iterations': 3}
 ```
+
+### SSH 远程调试
+
+当开发板接在远程机器上（实验室服务器、STM32MP157 A7 核等），通过 SSH 远程执行 GDB 命令和读取串口。
+
+**依赖**：系统 `ssh` 命令（Windows 10+ 自带 OpenSSH，Linux/macOS 默认安装）。无额外 Python 包。
+
+```python
+from debug_loop.ssh_config import SSHConfig
+from debug_loop import create_debug_loop
+
+ssh = SSHConfig(host="192.168.1.100", user="root")
+
+loop = create_debug_loop(
+    goal="分析 M4 崩溃",
+    transport="ssh",
+    ssh_config=ssh,
+    remote_serial="/dev/ttySTM1",
+    gdb_command="gdb-multiarch",
+    remote_elf="/home/root/firmware.elf",
+)
+result = loop.run()
+```
+
+**STM32MP157 示例**（A7 核 SSH 调试 M4）：
+
+```python
+ssh = SSHConfig(host="192.168.1.100", user="root")
+loop = create_debug_loop(
+    goal="M4 HardFault 诊断",
+    transport="ssh",
+    ssh_config=ssh,
+    remote_serial="/dev/ttySTM1",
+    gdb_command="gdb-multiarch",
+    remote_elf="/home/root/m4_firmware.elf",
+)
+```
+
+**SSH 配置选项**：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `host` | 远程主机（必填） | — |
+| `user` | SSH 用户名 | 当前用户 |
+| `port` | SSH 端口 | 22 |
+| `key_file` | 私钥路径 | `~/.ssh/id_rsa` |
+| `connect_timeout` | 连接超时（秒） | 10 |
+| `control_master` | 连接复用 | True |
+| `options` | 额外 SSH 选项 | `{}` |
+
+SSH 自动继承 `~/.ssh/config`，支持 ProxyJump、Agent Forwarding 等。
+
+**Phase 1 限制**：当前为 per-command 模式（每次 GDB 命令一个 SSH 调用），适合崩溃分析场景。断点状态不跨调用保持，不支持 step-through 调试。
 
 ## GDB 命令参考
 
@@ -253,97 +232,58 @@ print(result)  # {'status': 'success', 'reason': '...', 'iterations': 3}
 
 ## MCP Server
 
-内置 MCP server，让 AI agent 直接调用分析工具。
-
 ```bash
-# 启动（stdio 模式）
 python mcp_server.py
-
-# 或在 Claude Code 中配置（.mcp.json 已自动生成）
 ```
-
-### MCP 工具
 
 | 工具 | 说明 |
 |------|------|
-| `parse_oops` | 解析 oops log / GDB JSON → 结构化数据 |
-| `analyze_crash` | 完整分析管线（解析 + enrich + prompt 生成） |
-| `list_actions` | 列出可用的调试动作（12 种） |
-| `translate_action` | 结构化动作 → GDB 命令 |
-| `get_system_prompt` | 获取目标类型的系统提示 |
-
-### 在 Claude Code 中使用
-
-将以下内容添加到 Claude Code 的 MCP 配置（`.claude/settings.json`）：
-
-```json
-{
-  "mcpServers": {
-    "gdb-ai-bridge": {
-      "command": "python",
-      "args": ["/path/to/gdb-ai-bridge/mcp_server.py"]
-    }
-  }
-}
-```
-
-## Skill
-
-Claude Code 内置 skill，粘贴 oops log 自动触发分析。
-
-文件：`skills/analyze-crash.md`
-
-触发条件：
-- 用户粘贴内核 oops log 或 panic 输出
-- 提到 "kernel panic"、"HardFault"、"oops"、"crash analysis"
-- 有 GDB bridge JSON 文件需要分析
+| `parse_oops` | 解析 oops log / GDB JSON |
+| `analyze_crash` | 完整分析管线 |
+| `list_actions` | 列出调试动作（12 种） |
+| `translate_action` | 动作 → GDB 命令 |
+| `get_system_prompt` | 目标类型系统提示 |
 
 ## 文件结构
 
 ```
 gdb-ai-bridge/
-├── parser.py              # oops log 解析器（ARM32/ARM64）
-├── enricher.py            # kernel-index 符号查询
-├── analyzer.py            # AI 分析 prompt 构建
-├── mcp_server.py          # MCP server（5 个工具）
-├── gdb_bridge/            # GDB Python 扩展
-│   ├── gdb_bridge.py      # GDB 命令注册 + HTTP API
-│   ├── collector.py       # 分层采集器
-│   ├── output.py          # JSON 输出
-│   ├── arch/              # 架构适配器（arm, arm64）
-│   └── target/            # 目标适配器（baremetal, linux）
-├── debug_loop/            # AI 调试循环
-│   ├── loop.py            # 主循环
-│   ├── serial_monitor.py  # UART 监听
-│   ├── gdb_client.py      # GDB HTTP 客户端
-│   ├── evaluator.py       # 成功/失败判断
-│   ├── safety.py          # 安全限制
-│   └── actions.py         # 结构化动作
-├── skills/                # Claude Code skills
-│   └── analyze-crash.md   # 崩溃分析 skill
-├── scripts/               # OpenOCD 配置示例
-└── tests/                 # 187 个测试
+├── parser.py                  # oops log 解析器
+├── enricher.py                # 符号查询
+├── analyzer.py                # prompt 构建
+├── mcp_server.py              # MCP server
+├── gdb_bridge/                # GDB Python 扩展
+│   ├── gdb_bridge.py          # 命令 + HTTP API
+│   ├── collector.py           # 分层采集器
+│   ├── arch/                  # 架构适配器
+│   └── target/                # 目标适配器
+├── debug_loop/                # AI 调试循环
+│   ├── loop.py                # 主循环
+│   ├── serial_monitor.py      # 本地串口
+│   ├── gdb_client.py          # HTTP 客户端
+│   ├── ssh_config.py          # SSH 配置
+│   ├── ssh_gdb_client.py      # SSH GDB 客户端
+│   ├── ssh_serial_monitor.py  # SSH 远程串口
+│   ├── evaluator.py           # 成功判断
+│   ├── safety.py              # 安全限制
+│   └── actions.py             # 结构化动作
+├── skills/                    # Claude Code skills
+└── tests/                     # 220 个测试
 ```
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -v    # 运行所有 187 个测试
+python -m pytest tests/ -v    # 运行所有 220 个测试
 ```
 
 ## 常见问题
 
-**Q: GDB 没有 Python 支持怎么办？**
-A: 安装 xPack ARM GCC（自带 gdb-py3）：`winget install xPack.arm-none-eabi-gcc`
+**Q: SSH 连接慢怎么办？**
+A: SSHConfig 默认开启 ControlMaster 连接复用，首次连接后后续命令几乎零开销。
 
-**Q: OpenOCD 连不上目标板？**
-A: 检查：1) SWD/JTAG 接线 2) 驱动（Windows 可能需要 Zadig） 3) `adapter speed` 降到 1000 试试
-
-**Q: `ai collect` 报错 "No debug symbols"？**
-A: 编译时加 `-g` 选项，然后在 GDB 中 `file your_firmware.elf` 加载符号
+**Q: SSH 远程调试支持断点吗？**
+A: Phase 1 为 per-command 模式，断点不跨调用保持。适合崩溃分析。交互式调试将在 Phase 2 支持。
 
 **Q: 换芯片需要改代码吗？**
-A: 不需要。只改 OpenOCD 配置文件和 `ai config arch/target` 即可
-
-**Q: 支持 RISC-V 吗？**
-A: 架构适配器接口已定义，但 `arch/riscv.py` 还没实现。欢迎贡献
+A: 不需要。只改 OpenOCD 配置和 `ai config arch/target` 即可。
