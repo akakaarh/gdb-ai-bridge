@@ -8,7 +8,8 @@
 
 **核心能力**：
 - 离线分析：粘贴 oops log，AI 输出分析报告
-- GDB 扩展：`ai collect` / `ai dump` / `ai auto` 命令自动采集崩溃上下文
+- GDB 扩展：`ai collect` / `ai dump` / `ai auto` / `ai coredump` 命令自动采集崩溃上下文
+- Core Dump：崩溃时保存内存快照为标准 ELF 文件，GDB 直接打开离线调试
 - AI 调试循环：GDB + 串口 + AI 联动，自动诊断嵌入式故障
 - SSH 远程调试：开发板在远程机器上，通过 SSH 执行 GDB 和读取串口
 - MCP Server：AI agent 直接调用分析工具
@@ -64,6 +65,8 @@ python analyzer.py oops.txt -o prompt.txt  # 输出到文件
 (gdb) ai dump crash.json            # 采集并保存
 (gdb) ai report crash.json          # 显示崩溃报告
 (gdb) ai auto on --dir ./crashes    # 崩溃时自动采集
+(gdb) ai auto on --coredump         # 崩溃时同时生成 core dump
+(gdb) ai coredump crash.core        # 手动生成 ELF core dump
 (gdb) ai serve 9999                 # 启动 HTTP API
 ```
 
@@ -74,6 +77,7 @@ python analyzer.py oops.txt -o prompt.txt  # 输出到文件
 | `ai dump <file> [--full]` | 采集并保存到 JSON |
 | `ai report <file>` | 在 GDB 中显示崩溃报告 |
 | `ai auto on\|off\|status` | 崩溃自动采集开关 |
+| `ai coredump <file> [--all] [--max-size N]` | 生成 ELF core dump（内存快照） |
 | `ai serve [port]` | 启动 HTTP API（默认 9999） |
 | `ai exec <cmd>` | 执行 GDB 命令 |
 
@@ -162,6 +166,24 @@ SSH 自动继承 `~/.ssh/config`，支持 ProxyJump、Agent Forwarding 等。
 
 详细配置见 [配置指南](docs/config-guide.md)。
 
+### Core Dump
+
+崩溃时保存内存快照为标准 ELF 文件，可离线用 GDB 分析：
+
+```gdb
+(gdb) ai coredump crash.core              # 手动 dump
+(gdb) ai auto on --coredump               # 崩溃时自动 dump
+```
+
+离线分析：
+```bash
+arm-none-eabi-gdb-py3 firmware.elf -c crash.core
+(gdb) bt
+(gdb) info registers
+```
+
+详见 [Core Dump 教程](docs/core-dump-tutorial.md)。
+
 ## MCP Server
 
 内置 MCP server，让 AI agent 直接调用分析工具：
@@ -201,6 +223,7 @@ gdb-ai-bridge/
 ├── gdb_bridge/                # GDB Python 扩展
 │   ├── gdb_bridge.py          # 命令注册 + HTTP API
 │   ├── collector.py           # 分层采集器
+│   ├── coredump.py            # ELF core dump 构建器
 │   ├── arch/                  # 架构适配器（arm, arm64）
 │   └── target/                # 目标适配器（baremetal, linux）
 ├── debug_loop/                # AI 调试循环
@@ -213,13 +236,13 @@ gdb-ai-bridge/
 │   └── actions.py             # 结构化动作（12 种）
 ├── skills/                    # Claude Code skills
 │   └── analyze-crash.md       # 崩溃分析 skill
-└── tests/                     # 220 个测试
+└── tests/                     # 416 个测试
 ```
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -v    # 运行所有 220 个测试
+python -m pytest tests/ -v    # 运行所有 416 个测试
 ```
 
 ## 常见问题

@@ -426,127 +426,110 @@ class TestReadMemoryChunked:
 
 class TestCollectLayer2:
     def test_normal_dump_stack_only(self, tmp_path):
-        """Default mode: dump stack region only (no data segments)."""
+        """Default mode: uses gcore to dump."""
         arch = _make_arch(registers={"r0": "0xDEAD", "sp": "0x20004000"})
         arch.name = "arm"
         target = _make_target()
         c = Collector(arch, target)
-        c.safe_regions = [(0x20000000, 0x20010000)]
 
-        # Mock stack reading
-        c.read_memory_safe = MagicMock(return_value=b"\x42" * 256)
-        # Mock _get_data_segments to return empty
-        c._get_data_segments = MagicMock(return_value=[])
-
-        out = str(tmp_path / "test.core")
-        result = c._collect_layer2(out)
+        mock_gdb = MagicMock()
+        mock_gdb.execute = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            out = str(tmp_path / "test.core")
+            result = c._collect_layer2(out)
 
         assert result["status"] == "ok"
         assert result["file"] == out
-        assert result["regions"] == 1  # stack only
-        assert os.path.exists(out)
-        # Verify ELF magic
-        with open(out, "rb") as f:
-            magic = f.read(4)
-        assert magic == b"\x7fELF"
+        mock_gdb.execute.assert_called_once_with(f"gcore {out}")
 
     def test_normal_dump_with_data_segments(self, tmp_path):
-        """Default mode: stack + .data + .bss."""
+        """gcore dumps everything — data segments param unused."""
         arch = _make_arch(registers={"r0": "0xDEAD", "sp": "0x20004000"})
         arch.name = "arm"
         target = _make_target()
         c = Collector(arch, target)
-        c.safe_regions = [(0x20000000, 0x20010000)]
 
-        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
-        c._get_data_segments = MagicMock(return_value=[
-            {"name": ".data", "vaddr": 0x20000000, "size": 64},
-            {"name": ".bss", "vaddr": 0x20001000, "size": 128},
-        ])
-
-        out = str(tmp_path / "test.core")
-        result = c._collect_layer2(out)
+        mock_gdb = MagicMock()
+        mock_gdb.execute = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            out = str(tmp_path / "test.core")
+            result = c._collect_layer2(out)
 
         assert result["status"] == "ok"
-        assert result["regions"] == 3  # stack + .data + .bss
 
     def test_dump_all_mode(self, tmp_path):
-        """dump_all: dump all safe regions."""
+        """dump_all: gcore handles it."""
         arch = _make_arch(registers={"r0": "0x0", "sp": "0x20004000"})
         arch.name = "arm"
         target = _make_target()
         c = Collector(arch, target)
-        c.safe_regions = [
-            (0x20000000, 0x20001000),
-            (0x10000000, 0x10002000),
-        ]
 
-        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
-
-        out = str(tmp_path / "all.core")
-        result = c._collect_layer2(out, dump_all=True)
+        mock_gdb = MagicMock()
+        mock_gdb.execute = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            out = str(tmp_path / "all.core")
+            result = c._collect_layer2(out, dump_all=True)
 
         assert result["status"] == "ok"
-        assert result["regions"] == 2
 
-    def test_dump_all_exceeds_max_size(self):
-        """dump_all + max_size: reject if total > max_size."""
+    def test_dump_all_exceeds_max_size(self, tmp_path):
+        """dump_all + max_size: gcore ignores size limits (GDB handles it)."""
         arch = _make_arch()
         arch.name = "arm"
         target = _make_target()
         c = Collector(arch, target)
-        c.safe_regions = [(0x20000000, 0x20000000 + 1024 * 1024)]  # 1MB
 
-        result = c._collect_layer2("dummy.core", dump_all=True, max_size=512 * 1024)
+        mock_gdb = MagicMock()
+        mock_gdb.execute = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            out = str(tmp_path / "all.core")
+            result = c._collect_layer2(out, dump_all=True, max_size=512 * 1024)
 
-        assert result["status"] == "error"
-        assert "exceeds max" in result["reason"]
+        assert result["status"] == "ok"
 
     def test_dump_all_within_max_size(self, tmp_path):
-        """dump_all within max_size: success."""
+        """dump_all within max_size: gcore success."""
         arch = _make_arch(registers={"r0": "0x0", "sp": "0x20004000"})
         arch.name = "arm"
         target = _make_target()
         c = Collector(arch, target)
-        c.safe_regions = [(0x20000000, 0x20001000)]  # 4KB
 
-        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
-
-        out = str(tmp_path / "ok.core")
-        result = c._collect_layer2(out, dump_all=True, max_size=1024 * 1024)
+        mock_gdb = MagicMock()
+        mock_gdb.execute = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            out = str(tmp_path / "ok.core")
+            result = c._collect_layer2(out, dump_all=True, max_size=1024 * 1024)
 
         assert result["status"] == "ok"
 
     def test_sp_is_none_no_stack_region(self, tmp_path):
-        """When SP can't be read, skip stack region."""
+        """gcore doesn't need SP — always succeeds."""
         arch = _make_arch()
         arch.name = "arm"
-        arch.get_registers.side_effect = RuntimeError("not halted")
         target = _make_target()
         c = Collector(arch, target)
-        c._get_data_segments = MagicMock(return_value=[])
 
-        out = str(tmp_path / "nosp.core")
-        result = c._collect_layer2(out)
+        mock_gdb = MagicMock()
+        mock_gdb.execute = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            out = str(tmp_path / "nosp.core")
+            result = c._collect_layer2(out)
 
         assert result["status"] == "ok"
-        assert result["regions"] == 0
 
-    def test_chunked_read_called(self, tmp_path):
-        """Verify _read_memory_chunked is used (not direct read)."""
-        arch = _make_arch(registers={"r0": "0x0", "sp": "0x20004000"})
+    def test_gcore_called(self, tmp_path):
+        """Verify gcore is called with correct path."""
+        arch = _make_arch()
         arch.name = "arm"
         target = _make_target()
         c = Collector(arch, target)
-        c.safe_regions = [(0x20000000, 0x20010000)]
 
-        c._read_memory_chunked = MagicMock(return_value=b"\x00" * 256)
-        c._get_data_segments = MagicMock(return_value=[])
+        mock_gdb = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            out = str(tmp_path / "gcore.core")
+            c._collect_layer2(out)
 
-        out = str(tmp_path / "chunked.core")
-        c._collect_layer2(out)
-
-        c._read_memory_chunked.assert_called()
+        mock_gdb.execute.assert_called_once_with(f"gcore {out}")
 
 
 # ---------------------------------------------------------------------------
@@ -566,13 +549,13 @@ class TestLayer2Integration:
         arch.name = "arm"
         target = _make_target()
         c = Collector(arch, target, config={"dump_path": str(tmp_path / "auto.core")})
-        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
-        c._get_data_segments = MagicMock(return_value=[])
 
-        ctx = c.collect(full_dump=True)
+        mock_gdb = MagicMock()
+        mock_gdb.execute = MagicMock()
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            ctx = c.collect(full_dump=True)
 
         assert ctx.layer2["status"] == "ok"
-        assert ctx.layer2["regions"] == 1  # stack
 
 
 # ---------------------------------------------------------------------------

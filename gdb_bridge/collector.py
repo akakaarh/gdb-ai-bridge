@@ -165,59 +165,22 @@ class Collector:
         return result
 
     def _collect_layer2(self, output_path, dump_all=False, max_size=64*1024*1024):
-        """Dump memory regions to ELF core dump.
+        """Dump memory to ELF core dump using GDB's gcore command.
 
         Args:
             output_path: Path to write the ELF core dump.
-            dump_all: If True, dump all safe regions. If False (default),
-                      dump stack + .data/.bss segments.
-            max_size: Maximum total bytes to dump (default 64MB).
-                      Only enforced when dump_all=True.
+            dump_all: Unused (kept for API compat). gcore dumps all accessible memory.
+            max_size: Unused (kept for API compat).
 
         Returns:
-            dict with status, file path, and region count.
+            dict with status and file path.
         """
-        regions = []
-
-        if dump_all:
-            total = sum(end - start for start, end in self.safe_regions)
-            if total > max_size:
-                return {
-                    "status": "error",
-                    "reason": f"Total size {total} exceeds max {max_size}",
-                }
-            for start, end in self.safe_regions:
-                data = self._read_memory_chunked(start, end - start)
-                regions.append(MemoryRegion("ram", start, data))
-        else:
-            sp = self._get_sp()
-            if sp is not None:
-                stack_top = self._get_stack_top(sp)
-                stack_size = stack_top - sp
-                if stack_size > 0:
-                    stack_data = self._read_memory_chunked(sp, stack_size)
-                    regions.append(MemoryRegion("stack", sp, stack_data))
-
-            for seg in self._get_data_segments():
-                data = self._read_memory_chunked(seg["vaddr"], seg["size"])
-                regions.append(MemoryRegion(seg["name"], seg["vaddr"], data))
-
-        # Get raw register values (integers) for core dump
-        raw_regs = {}
         try:
-            regs = self.arch.get_registers()
-            for k, v in regs.items():
-                raw_regs[k] = int(v, 16) if isinstance(v, str) else v
-        except Exception:
-            pass
-
-        builder = ELFCoreDumpBuilder(arch=self.arch.name)
-        builder.set_registers(raw_regs)
-        for r in regions:
-            builder.add_memory_region(r.name, r.vaddr, r.data)
-        builder.build(output_path)
-
-        return {"status": "ok", "file": output_path, "regions": len(regions)}
+            import gdb
+            gdb.execute(f"gcore {output_path}")
+            return {"status": "ok", "file": output_path, "regions": -1}
+        except Exception as e:
+            return {"status": "error", "reason": str(e)}
 
     def _get_sp(self):
         """Read the stack pointer register. Returns int or None."""
@@ -241,18 +204,20 @@ class Collector:
         Returns:
             Stack top address (int).
         """
+        MAX_STACK_SIZE = 1024 * 1024  # 1MB sanity limit
+
         # Level 1: _estack symbol
         try:
             import gdb
             estack = int(gdb.parse_and_eval("&_estack"))
-            if estack > sp:
+            if estack > sp and (estack - sp) <= MAX_STACK_SIZE:
                 return estack
         except Exception:
             pass
 
         # Level 2: SRAM region containing SP
         for start, end in self.safe_regions:
-            if start <= sp < end:
+            if start <= sp < end and (end - sp) <= MAX_STACK_SIZE:
                 return end
 
         # Level 3: default 8KB
