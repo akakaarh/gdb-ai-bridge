@@ -223,7 +223,7 @@ class TestDebugContext:
     def test_to_dict_keys(self):
         ctx = DebugContext()
         d = ctx.to_dict()
-        expected = {"version", "timestamp", "config", "layer0", "layer1", "layer2", "errors", "decoded_registers"}
+        expected = {"version", "timestamp", "config", "layer0", "layer1", "layer2", "errors", "decoded_registers", "tasks"}
         assert set(d.keys()) == expected
 
     def test_version_default(self):

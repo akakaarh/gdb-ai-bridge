@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 
 from gdb_bridge.svd import SVDParser, RegisterDecoder
+from gdb_bridge.freertos import FreeRTOSParser, tasks_to_dicts
 
 
 # Cortex-M SCB (System Control Block) fault registers
@@ -41,6 +42,7 @@ class DebugContext:
         self.layer2 = {}
         self.errors = []
         self.decoded_registers = ""
+        self.tasks = []  # list of TaskInfo dicts (from FreeRTOS)
 
     def to_dict(self):
         return {
@@ -52,6 +54,7 @@ class DebugContext:
             "layer2": self.layer2,
             "errors": self.errors,
             "decoded_registers": self.decoded_registers,
+            "tasks": self.tasks,
         }
 
 
@@ -105,6 +108,9 @@ class Collector:
         # Auto-decode SCB fault registers when SVD is loaded
         if self._register_decoder is not None:
             ctx.decoded_registers = self._decode_scb_registers()
+
+        # Collect FreeRTOS task list if available
+        ctx.tasks = self._collect_freertos_tasks()
 
         return ctx
 
@@ -265,3 +271,14 @@ class Collector:
             return "\n".join(lines)
         except Exception:
             return ""
+
+    def _collect_freertos_tasks(self) -> list[dict]:
+        """Try to parse FreeRTOS tasks. Returns list of task dicts, or empty list."""
+        try:
+            parser = FreeRTOSParser(self._read_mem32)
+            if not parser.detect():
+                return []
+            tasks = parser.parse_tasks()
+            return tasks_to_dicts(tasks)
+        except Exception:
+            return []

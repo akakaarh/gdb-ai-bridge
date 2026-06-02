@@ -31,6 +31,7 @@ except ImportError:
 from gdb_bridge.collector import Collector, DebugContext
 from gdb_bridge.output import save_context, print_context
 from gdb_bridge.svd import SVDParser, RegisterDecoder
+from gdb_bridge.freertos import FreeRTOSParser, format_task_table
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +494,25 @@ def _print_crash_report(data):
     _gdb.write("=" * 60 + "\n\n")
 
 
+class AITasksCommand(_gdb.Command if _gdb else object):
+    """List FreeRTOS tasks. Usage: ai tasks"""
+
+    def __init__(self):
+        if _gdb:
+            super().__init__("ai tasks", _gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        try:
+            parser = FreeRTOSParser(_read_mem32)
+            if not parser.detect():
+                _gdb.write("No FreeRTOS detected (pxCurrentTCB symbol not found).\n")
+                return
+            tasks = parser.parse_tasks()
+            _gdb.write(format_task_table(tasks))
+        except Exception as e:
+            _gdb.write(f"Error reading FreeRTOS tasks: {e}\n")
+
+
 # ---------------------------------------------------------------------------
 # HTTP Server for external command execution
 # ---------------------------------------------------------------------------
@@ -676,4 +696,5 @@ if _gdb:
     AIServeCommand()
     AIExecCommand()
     AIDecodeCommand()
+    AITasksCommand()
     _gdb.write("GDB-AI Bridge loaded. Use 'ai info' to get started.\n")
