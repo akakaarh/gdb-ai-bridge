@@ -50,6 +50,18 @@ ACTIONS = {
         "params": [],
         "gdb": "finish",
     },
+    "set_watchpoint": {
+        "params": ["expression"],
+        "gdb": "watch {expression}",
+    },
+    "set_read_watchpoint": {
+        "params": ["expression"],
+        "gdb": "rwatch {expression}",
+    },
+    "set_access_watchpoint": {
+        "params": ["expression"],
+        "gdb": "awatch {expression}",
+    },
 }
 
 

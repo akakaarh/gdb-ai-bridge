@@ -3,6 +3,7 @@
 ALLOWED_COMMANDS = [
     "info", "print", "x/", "backtrace", "bt",
     "step", "next", "continue", "break", "finish",
+    "watch", "rwatch", "awatch",
     "info registers", "info locals", "info breakpoints",
     "info all-registers",
 ]

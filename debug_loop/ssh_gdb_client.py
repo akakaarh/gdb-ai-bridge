@@ -182,3 +182,12 @@ class SSHGDBClient:
 
     def finish(self) -> str | None:
         return self.execute("finish")
+
+    def set_watchpoint(self, expression: str) -> str | None:
+        return self.execute(f"watch {expression}")
+
+    def set_read_watchpoint(self, expression: str) -> str | None:
+        return self.execute(f"rwatch {expression}")
+
+    def set_access_watchpoint(self, expression: str) -> str | None:
+        return self.execute(f"awatch {expression}")

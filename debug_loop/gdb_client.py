@@ -85,3 +85,12 @@ class GDBClient:
 
     def finish(self):
         return self.execute("finish")
+
+    def set_watchpoint(self, expression):
+        return self.execute(f"watch {expression}")
+
+    def set_read_watchpoint(self, expression):
+        return self.execute(f"rwatch {expression}")
+
+    def set_access_watchpoint(self, expression):
+        return self.execute(f"awatch {expression}")
