@@ -1,6 +1,9 @@
 """Tests for gdb.collector — layered collection with graceful degradation."""
+import os
 import pytest
-from unittest.mock import MagicMock
+import struct
+import tempfile
+from unittest.mock import MagicMock, patch, mock_open
 
 from gdb_bridge.collector import Collector, DebugContext
 from gdb_bridge.arch.base import ArchAdapter
@@ -196,10 +199,361 @@ class TestLayer1Degradation:
 
 
 # ---------------------------------------------------------------------------
-# Layer 2 — full_dump toggle
+# Layer 2 — _get_sp
 # ---------------------------------------------------------------------------
 
-class TestLayer2:
+class TestGetSp:
+    def test_reads_sp_from_arch(self):
+        arch = _make_arch(registers={"r0": "0x00000000", "sp": "0x20004000"})
+        target = _make_target()
+        c = Collector(arch, target)
+
+        assert c._get_sp() == 0x20004000
+
+    def test_sp_not_in_registers(self):
+        arch = _make_arch(registers={"r0": "0x00000000"})
+        target = _make_target()
+        c = Collector(arch, target)
+
+        assert c._get_sp() == 0x0
+
+    def test_sp_is_int(self):
+        arch = MagicMock(spec=ArchAdapter)
+        arch.get_registers.return_value = {"sp": 0x20008000}
+        target = _make_target()
+        c = Collector(arch, target)
+
+        assert c._get_sp() == 0x20008000
+
+    def test_arch_raises(self):
+        arch = _make_arch()
+        arch.get_registers.side_effect = RuntimeError("halted")
+        target = _make_target()
+        c = Collector(arch, target)
+
+        assert c._get_sp() is None
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — _get_stack_top (3-level fallback)
+# ---------------------------------------------------------------------------
+
+class TestGetStackTop:
+    def test_estack_symbol_fallback1(self):
+        """Level 1: _estack symbol found and > SP."""
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+
+        mock_gdb = MagicMock()
+        mock_gdb.parse_and_eval.return_value = 0x20010000
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            result = c._get_stack_top(0x20004000)
+
+        assert result == 0x20010000
+
+    def test_estack_below_sp_fallback2(self):
+        """Level 1 fails (_estack < SP), Level 2: SRAM region end."""
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [(0x20000000, 0x20010000)]
+
+        mock_gdb = MagicMock()
+        mock_gdb.parse_and_eval.return_value = 0x20002000  # below SP
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            result = c._get_stack_top(0x20004000)
+
+        assert result == 0x20010000
+
+    def test_no_estack_no_regions_fallback3(self):
+        """Level 1-2 fail, Level 3: default SP + 8KB."""
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+
+        mock_gdb = MagicMock()
+        mock_gdb.parse_and_eval.side_effect = RuntimeError("no symbol")
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            result = c._get_stack_top(0x20004000)
+
+        assert result == 0x20004000 + 8192
+
+    def test_no_gdb_no_regions_fallback3(self):
+        """GDB import fails, no regions → default."""
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+
+        # No gdb in sys.modules → import gdb fails
+        with patch.dict("sys.modules", {"gdb": None}):
+            result = c._get_stack_top(0x20004000)
+
+        assert result == 0x20004000 + 8192
+
+    def test_sp_not_in_any_region_fallback3(self):
+        """SP not in any safe region → default."""
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [(0x10000000, 0x10060000)]  # SP not in this range
+
+        mock_gdb = MagicMock()
+        mock_gdb.parse_and_eval.side_effect = RuntimeError("no symbol")
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            result = c._get_stack_top(0x20004000)
+
+        assert result == 0x20004000 + 8192
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — _get_data_segments
+# ---------------------------------------------------------------------------
+
+class TestGetDataSegments:
+    def test_parses_data_and_bss(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+
+        gdb_output = (
+            "Local exec file:\n"
+            "	`fw.elf', file type elf32-littlearm.\n"
+            "	0x08000000 - 0x08020000 is .text\n"
+            "	0x20000000 - 0x20001000 is .data\n"
+            "	0x20001000 - 0x20002000 is .bss\n"
+        )
+        mock_gdb = MagicMock()
+        mock_gdb.execute.return_value = gdb_output
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            segs = c._get_data_segments()
+
+        assert len(segs) == 2
+        assert segs[0]["name"] == ".data"
+        assert segs[0]["vaddr"] == 0x20000000
+        assert segs[0]["size"] == 0x1000
+        assert segs[1]["name"] == ".bss"
+        assert segs[1]["vaddr"] == 0x20001000
+        assert segs[1]["size"] == 0x1000
+
+    def test_no_data_bss_segments(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+
+        gdb_output = "	0x08000000 - 0x08020000 is .text\n"
+        mock_gdb = MagicMock()
+        mock_gdb.execute.return_value = gdb_output
+        with patch.dict("sys.modules", {"gdb": mock_gdb}):
+            segs = c._get_data_segments()
+
+        assert segs == []
+
+    def test_gdb_not_available(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+
+        with patch.dict("sys.modules", {"gdb": None}):
+            segs = c._get_data_segments()
+
+        assert segs == []
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — _read_memory_chunked
+# ---------------------------------------------------------------------------
+
+class TestReadMemoryChunked:
+    def test_full_read(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+        c.read_memory_safe = MagicMock(return_value=b"\xAB\xCD\xEF\x12")
+
+        result = c._read_memory_chunked(0x20000000, 4, chunk_size=4096)
+
+        assert result == b"\xAB\xCD\xEF\x12"
+        c.read_memory_safe.assert_called_once_with(0x20000000, 4)
+
+    def test_multi_chunk(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+        c.read_memory_safe = MagicMock(return_value=b"\x01" * 4)
+
+        result = c._read_memory_chunked(0x20000000, 8, chunk_size=4)
+
+        assert len(result) == 8
+        assert result == b"\x01" * 8
+        assert c.read_memory_safe.call_count == 2
+
+    def test_failed_chunk_zero_filled(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+        # First chunk succeeds, second fails
+        c.read_memory_safe = MagicMock(side_effect=[b"\xAA\xBB", None])
+
+        result = c._read_memory_chunked(0x20000000, 4, chunk_size=2)
+
+        assert result == b"\xAA\xBB\x00\x00"
+
+    def test_all_chunks_fail(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+        c.read_memory_safe = MagicMock(return_value=None)
+
+        result = c._read_memory_chunked(0x20000000, 4096, chunk_size=4096)
+
+        assert result == b"\x00" * 4096
+
+    def test_partial_last_chunk(self):
+        arch = _make_arch()
+        target = _make_target()
+        c = Collector(arch, target)
+        c.read_memory_safe = MagicMock(return_value=b"\xFF")
+
+        result = c._read_memory_chunked(0x20000000, 1, chunk_size=4096)
+
+        assert result == b"\xFF"
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — _collect_layer2 (core dump generation)
+# ---------------------------------------------------------------------------
+
+class TestCollectLayer2:
+    def test_normal_dump_stack_only(self, tmp_path):
+        """Default mode: dump stack region only (no data segments)."""
+        arch = _make_arch(registers={"r0": "0xDEAD", "sp": "0x20004000"})
+        arch.name = "arm"
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [(0x20000000, 0x20010000)]
+
+        # Mock stack reading
+        c.read_memory_safe = MagicMock(return_value=b"\x42" * 256)
+        # Mock _get_data_segments to return empty
+        c._get_data_segments = MagicMock(return_value=[])
+
+        out = str(tmp_path / "test.core")
+        result = c._collect_layer2(out)
+
+        assert result["status"] == "ok"
+        assert result["file"] == out
+        assert result["regions"] == 1  # stack only
+        assert os.path.exists(out)
+        # Verify ELF magic
+        with open(out, "rb") as f:
+            magic = f.read(4)
+        assert magic == b"\x7fELF"
+
+    def test_normal_dump_with_data_segments(self, tmp_path):
+        """Default mode: stack + .data + .bss."""
+        arch = _make_arch(registers={"r0": "0xDEAD", "sp": "0x20004000"})
+        arch.name = "arm"
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [(0x20000000, 0x20010000)]
+
+        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
+        c._get_data_segments = MagicMock(return_value=[
+            {"name": ".data", "vaddr": 0x20000000, "size": 64},
+            {"name": ".bss", "vaddr": 0x20001000, "size": 128},
+        ])
+
+        out = str(tmp_path / "test.core")
+        result = c._collect_layer2(out)
+
+        assert result["status"] == "ok"
+        assert result["regions"] == 3  # stack + .data + .bss
+
+    def test_dump_all_mode(self, tmp_path):
+        """dump_all: dump all safe regions."""
+        arch = _make_arch(registers={"r0": "0x0", "sp": "0x20004000"})
+        arch.name = "arm"
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [
+            (0x20000000, 0x20001000),
+            (0x10000000, 0x10002000),
+        ]
+
+        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
+
+        out = str(tmp_path / "all.core")
+        result = c._collect_layer2(out, dump_all=True)
+
+        assert result["status"] == "ok"
+        assert result["regions"] == 2
+
+    def test_dump_all_exceeds_max_size(self):
+        """dump_all + max_size: reject if total > max_size."""
+        arch = _make_arch()
+        arch.name = "arm"
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [(0x20000000, 0x20000000 + 1024 * 1024)]  # 1MB
+
+        result = c._collect_layer2("dummy.core", dump_all=True, max_size=512 * 1024)
+
+        assert result["status"] == "error"
+        assert "exceeds max" in result["reason"]
+
+    def test_dump_all_within_max_size(self, tmp_path):
+        """dump_all within max_size: success."""
+        arch = _make_arch(registers={"r0": "0x0", "sp": "0x20004000"})
+        arch.name = "arm"
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [(0x20000000, 0x20001000)]  # 4KB
+
+        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
+
+        out = str(tmp_path / "ok.core")
+        result = c._collect_layer2(out, dump_all=True, max_size=1024 * 1024)
+
+        assert result["status"] == "ok"
+
+    def test_sp_is_none_no_stack_region(self, tmp_path):
+        """When SP can't be read, skip stack region."""
+        arch = _make_arch()
+        arch.name = "arm"
+        arch.get_registers.side_effect = RuntimeError("not halted")
+        target = _make_target()
+        c = Collector(arch, target)
+        c._get_data_segments = MagicMock(return_value=[])
+
+        out = str(tmp_path / "nosp.core")
+        result = c._collect_layer2(out)
+
+        assert result["status"] == "ok"
+        assert result["regions"] == 0
+
+    def test_chunked_read_called(self, tmp_path):
+        """Verify _read_memory_chunked is used (not direct read)."""
+        arch = _make_arch(registers={"r0": "0x0", "sp": "0x20004000"})
+        arch.name = "arm"
+        target = _make_target()
+        c = Collector(arch, target)
+        c.safe_regions = [(0x20000000, 0x20010000)]
+
+        c._read_memory_chunked = MagicMock(return_value=b"\x00" * 256)
+        c._get_data_segments = MagicMock(return_value=[])
+
+        out = str(tmp_path / "chunked.core")
+        c._collect_layer2(out)
+
+        c._read_memory_chunked.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — full_dump toggle (collect integration)
+# ---------------------------------------------------------------------------
+
+class TestLayer2Integration:
     def test_no_full_dump(self):
         arch = _make_arch()
         target = _make_target()
@@ -207,12 +561,18 @@ class TestLayer2:
 
         assert ctx.layer2 == {}
 
-    def test_full_dump_triggers_layer2(self):
-        arch = _make_arch()
+    def test_full_dump_triggers_layer2(self, tmp_path):
+        arch = _make_arch(registers={"r0": "0x0", "sp": "0x20004000"})
+        arch.name = "arm"
         target = _make_target()
-        ctx = Collector(arch, target).collect(full_dump=True)
+        c = Collector(arch, target, config={"dump_path": str(tmp_path / "auto.core")})
+        c.read_memory_safe = MagicMock(return_value=b"\x00" * 64)
+        c._get_data_segments = MagicMock(return_value=[])
 
-        assert ctx.layer2["status"] == "not_implemented"
+        ctx = c.collect(full_dump=True)
+
+        assert ctx.layer2["status"] == "ok"
+        assert ctx.layer2["regions"] == 1  # stack
 
 
 # ---------------------------------------------------------------------------

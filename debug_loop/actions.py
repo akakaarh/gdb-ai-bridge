@@ -62,6 +62,10 @@ ACTIONS = {
         "params": ["expression"],
         "gdb": "awatch {expression}",
     },
+    "dump_memory": {
+        "params": ["file", "addr", "size"],
+        "gdb": "dump binary memory {file} {addr} {addr}+{size}",
+    },
 }
 
 

@@ -245,6 +245,8 @@ class AIInfoCommand(_gdb.Command if _gdb else object):
         _gdb.write(f"  Python: {sys.version.split()[0]}\n")
         _gdb.write(f"  GDB:    {getattr(_gdb, 'VERSION', 'unknown')}\n")
         _gdb.write(f"  Auto:   {'ON' if _auto_mode['enabled'] else 'off'}\n")
+        if _auto_mode["enabled"] and _auto_mode["coredump"]:
+            _gdb.write(f"  Coredump: ON\n")
 
         # SVD status
         svd_path = _config.get("svd_file", "") or os.environ.get("SVD_FILE", "")
@@ -270,6 +272,7 @@ _auto_mode = {
     "output_dir": ".",
     "filter": "crash",  # "crash" or "all"
     "count": 0,
+    "coredump": False,
 }
 
 
@@ -320,10 +323,30 @@ def _auto_stop_handler(event):
         ctx = collector.collect()
 
         _auto_mode["count"] += 1
-        filename = f"auto_{_auto_mode['count']:04d}.json"
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"auto_{_auto_mode['count']:04d}_{ts}.json"
         filepath = os.path.join(_auto_mode["output_dir"], filename)
+
+        # Ensure output directory exists
+        os.makedirs(_auto_mode["output_dir"], exist_ok=True)
+
         save_context(ctx, filepath)
         _gdb.write(f"[AI Auto] Crash detected. Context saved to {filepath}\n")
+
+        # Core dump if enabled
+        if _auto_mode["coredump"]:
+            core_filename = f"auto_{_auto_mode['count']:04d}_{ts}.core"
+            core_filepath = os.path.join(_auto_mode["output_dir"], core_filename)
+            elf_file = _config.get("elf_file", "")
+            if elf_file:
+                collector.load_safe_regions_from_elf(elf_file)
+            result = collector._collect_layer2(core_filepath)
+            if result["status"] == "ok":
+                _gdb.write(f"[AI Auto] Core dump saved to {core_filepath}\n")
+            else:
+                _gdb.write(f"[AI Auto] Core dump failed: {result.get('reason', 'unknown')}\n")
+
         _print_crash_report(ctx.to_dict())
     except Exception as e:
         _gdb.write(f"[AI Auto] Error during collection: {e}\n")
@@ -339,7 +362,7 @@ class AIAutoCommand(_gdb.Command if _gdb else object):
     def invoke(self, arg, from_tty):
         parts = arg.split()
         if not parts:
-            _gdb.write("Usage: ai auto on|off|status [--dir <path>] [--filter crash|all]\n")
+            _gdb.write("Usage: ai auto on|off|status [--dir <path>] [--filter crash|all] [--coredump]\n")
             return
 
         action = parts[0]
@@ -353,6 +376,9 @@ class AIAutoCommand(_gdb.Command if _gdb else object):
             elif parts[i] == "--filter" and i + 1 < len(parts):
                 _auto_mode["filter"] = parts[i + 1]
                 i += 2
+            elif parts[i] == "--coredump":
+                _auto_mode["coredump"] = True
+                i += 1
             else:
                 i += 1
 
@@ -363,8 +389,9 @@ class AIAutoCommand(_gdb.Command if _gdb else object):
                 _gdb.events.stop.connect(_auto_stop_handler)
             except Exception:
                 pass  # Already connected
+            coredump_str = ", coredump=ON" if _auto_mode["coredump"] else ""
             _gdb.write(f"[AI Auto] Enabled. filter={_auto_mode['filter']}, "
-                        f"dir={_auto_mode['output_dir']}\n")
+                        f"dir={_auto_mode['output_dir']}{coredump_str}\n")
 
         elif action == "off":
             _auto_mode["enabled"] = False
@@ -376,9 +403,10 @@ class AIAutoCommand(_gdb.Command if _gdb else object):
 
         elif action == "status":
             _gdb.write(f"[AI Auto] {'ON' if _auto_mode['enabled'] else 'off'}\n")
-            _gdb.write(f"  filter: {_auto_mode['filter']}\n")
-            _gdb.write(f"  dir:    {_auto_mode['output_dir']}\n")
-            _gdb.write(f"  count:  {_auto_mode['count']}\n")
+            _gdb.write(f"  filter:    {_auto_mode['filter']}\n")
+            _gdb.write(f"  dir:       {_auto_mode['output_dir']}\n")
+            _gdb.write(f"  count:     {_auto_mode['count']}\n")
+            _gdb.write(f"  coredump:  {'ON' if _auto_mode['coredump'] else 'off'}\n")
 
         else:
             _gdb.write(f"Unknown action: {action}. Use on|off|status.\n")
@@ -492,6 +520,62 @@ def _print_crash_report(data):
     _gdb.write("=" * 60 + "\n")
     _gdb.write("  Run 'python analyzer.py <file>' for AI analysis prompt\n")
     _gdb.write("=" * 60 + "\n\n")
+
+
+class AICoredumpCommand(_gdb.Command if _gdb else object):
+    """Dump memory to ELF core dump. Usage: ai coredump <file> [--all] [--max-size N]"""
+
+    def __init__(self):
+        if _gdb:
+            super().__init__("ai coredump", _gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        if not _config["arch"] or not _config["target"]:
+            _gdb.write("Error: Run 'ai config arch <arch> target <target>' first.\n")
+            return
+
+        args = arg.split()
+        if not args:
+            _gdb.write("Usage: ai coredump <file> [--all] [--max-size N]\n")
+            return
+
+        filepath = args[0]
+        dump_all = "--all" in args
+        max_size = 64 * 1024 * 1024  # default 64MB
+
+        # Parse --max-size
+        for i, tok in enumerate(args):
+            if tok == "--max-size" and i + 1 < len(args):
+                try:
+                    max_size = int(args[i + 1])
+                except ValueError:
+                    _gdb.write(f"Error: Invalid max-size: {args[i + 1]}\n")
+                    return
+
+        if dump_all and max_size > 64 * 1024 * 1024:
+            _gdb.write("Error: --max-size cannot exceed 64MB for --all mode.\n")
+            return
+
+        try:
+            arch, target = _get_adapter(_config["arch"], _config["target"])
+        except ValueError as e:
+            _gdb.write(f"Error: {e}\n")
+            return
+
+        collector = Collector(arch, target, config=_config)
+
+        # Load safe regions from ELF if available
+        elf_file = _config.get("elf_file", "")
+        if elf_file:
+            collector.load_safe_regions_from_elf(elf_file)
+
+        result = collector._collect_layer2(filepath, dump_all=dump_all, max_size=max_size)
+
+        if result["status"] == "ok":
+            _gdb.write(f"[AI Coredump] Saved to {result['file']} "
+                        f"({result['regions']} regions)\n")
+        else:
+            _gdb.write(f"[AI Coredump] Error: {result.get('reason', 'unknown')}\n")
 
 
 class AITasksCommand(_gdb.Command if _gdb else object):
@@ -696,5 +780,6 @@ if _gdb:
     AIServeCommand()
     AIExecCommand()
     AIDecodeCommand()
+    AICoredumpCommand()
     AITasksCommand()
     _gdb.write("GDB-AI Bridge loaded. Use 'ai info' to get started.\n")

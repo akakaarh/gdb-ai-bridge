@@ -129,6 +129,46 @@ class TestTranslateAction:
         assert err is None
         assert cmd == "finish"
 
+    def test_dump_memory(self):
+        cmd, err = translate_action({
+            "action": "dump_memory",
+            "params": {"file": "/tmp/core.bin", "addr": "0x20000000", "size": "4096"},
+        })
+        assert err is None
+        assert cmd == "dump binary memory /tmp/core.bin 0x20000000 0x20000000+4096"
+
+    def test_dump_memory_different_values(self):
+        cmd, err = translate_action({
+            "action": "dump_memory",
+            "params": {"file": "stack.bin", "addr": "0x10000000", "size": "8192"},
+        })
+        assert err is None
+        assert cmd == "dump binary memory stack.bin 0x10000000 0x10000000+8192"
+
+    def test_dump_memory_missing_file(self):
+        ok, err = validate_action({
+            "action": "dump_memory",
+            "params": {"addr": "0x20000000", "size": "4096"},
+        })
+        assert ok is False
+        assert "file" in err
+
+    def test_dump_memory_missing_addr(self):
+        ok, err = validate_action({
+            "action": "dump_memory",
+            "params": {"file": "/tmp/core.bin", "size": "4096"},
+        })
+        assert ok is False
+        assert "addr" in err
+
+    def test_dump_memory_missing_size(self):
+        ok, err = validate_action({
+            "action": "dump_memory",
+            "params": {"file": "/tmp/core.bin", "addr": "0x20000000"},
+        })
+        assert ok is False
+        assert "size" in err
+
     def test_invalid_action_returns_error(self):
         cmd, err = translate_action({"action": "nonexistent"})
         assert cmd is None

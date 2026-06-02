@@ -2,7 +2,7 @@
 
 import pytest
 
-from debug_loop.safety import SafetyChecker
+from debug_loop.safety import SAFETY, SafetyChecker
 
 
 class TestWhitelist:
@@ -75,3 +75,29 @@ class TestOscillationDetection:
             sc.check_oscillation("b")
         # 6 entries, window=5, last 5 = a,b,a,b,a → 2 unique → oscillation
         assert sc.check_oscillation("b") is True
+
+
+class TestDumpSize:
+    def test_small_dump_allowed(self):
+        sc = SafetyChecker()
+        assert sc.check_dump_size(1024) is True
+
+    def test_exactly_at_limit(self):
+        sc = SafetyChecker()
+        assert sc.check_dump_size(SAFETY["max_dump_size"]) is True
+
+    def test_over_limit_rejected(self):
+        sc = SafetyChecker()
+        assert sc.check_dump_size(SAFETY["max_dump_size"] + 1) is False
+
+    def test_zero_size_allowed(self):
+        sc = SafetyChecker()
+        assert sc.check_dump_size(0) is True
+
+    def test_one_mb_dump_allowed(self):
+        sc = SafetyChecker()
+        assert sc.check_dump_size(1048576) is True
+
+    def test_two_mb_dump_rejected(self):
+        sc = SafetyChecker()
+        assert sc.check_dump_size(2 * 1048576) is False

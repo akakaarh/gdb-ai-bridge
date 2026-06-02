@@ -1,7 +1,9 @@
 """Layered debug context collector with graceful degradation."""
 import json
+import re
 from datetime import datetime
 
+from gdb_bridge.coredump import ELFCoreDumpBuilder, MemoryRegion
 from gdb_bridge.svd import SVDParser, RegisterDecoder
 from gdb_bridge.freertos import FreeRTOSParser, tasks_to_dicts
 
@@ -103,7 +105,13 @@ class Collector:
         ctx.layer1 = self._collect_layer1()
 
         if full_dump:
-            ctx.layer2 = self._collect_layer2()
+            try:
+                from datetime import datetime as dt
+                ts = dt.now().strftime("%Y%m%d_%H%M%S")
+                output_path = self.config.get("dump_path", f"core_{ts}.dump")
+                ctx.layer2 = self._collect_layer2(output_path)
+            except Exception as e:
+                ctx.layer2 = {"status": "error", "error": str(e)}
 
         # Auto-decode SCB fault registers when SVD is loaded
         if self._register_decoder is not None:
@@ -156,9 +164,142 @@ class Collector:
 
         return result
 
-    def _collect_layer2(self):
-        """Layer 2: user-triggered, large dumps."""
-        return {"status": "not_implemented"}
+    def _collect_layer2(self, output_path, dump_all=False, max_size=64*1024*1024):
+        """Dump memory regions to ELF core dump.
+
+        Args:
+            output_path: Path to write the ELF core dump.
+            dump_all: If True, dump all safe regions. If False (default),
+                      dump stack + .data/.bss segments.
+            max_size: Maximum total bytes to dump (default 64MB).
+                      Only enforced when dump_all=True.
+
+        Returns:
+            dict with status, file path, and region count.
+        """
+        regions = []
+
+        if dump_all:
+            total = sum(end - start for start, end in self.safe_regions)
+            if total > max_size:
+                return {
+                    "status": "error",
+                    "reason": f"Total size {total} exceeds max {max_size}",
+                }
+            for start, end in self.safe_regions:
+                data = self._read_memory_chunked(start, end - start)
+                regions.append(MemoryRegion("ram", start, data))
+        else:
+            sp = self._get_sp()
+            if sp is not None:
+                stack_top = self._get_stack_top(sp)
+                stack_size = stack_top - sp
+                if stack_size > 0:
+                    stack_data = self._read_memory_chunked(sp, stack_size)
+                    regions.append(MemoryRegion("stack", sp, stack_data))
+
+            for seg in self._get_data_segments():
+                data = self._read_memory_chunked(seg["vaddr"], seg["size"])
+                regions.append(MemoryRegion(seg["name"], seg["vaddr"], data))
+
+        # Get raw register values (integers) for core dump
+        raw_regs = {}
+        try:
+            regs = self.arch.get_registers()
+            for k, v in regs.items():
+                raw_regs[k] = int(v, 16) if isinstance(v, str) else v
+        except Exception:
+            pass
+
+        builder = ELFCoreDumpBuilder(arch=self.arch.name)
+        builder.set_registers(raw_regs)
+        for r in regions:
+            builder.add_memory_region(r.name, r.vaddr, r.data)
+        builder.build(output_path)
+
+        return {"status": "ok", "file": output_path, "regions": len(regions)}
+
+    def _get_sp(self):
+        """Read the stack pointer register. Returns int or None."""
+        try:
+            regs = self.arch.get_registers()
+            sp_str = regs.get("sp", "0x0")
+            return int(sp_str, 16) if isinstance(sp_str, str) else sp_str
+        except Exception:
+            return None
+
+    def _get_stack_top(self, sp):
+        """Find the top of the stack using a 3-level fallback.
+
+        1. _estack symbol from the ELF file
+        2. End of the SRAM region containing SP
+        3. Default: SP + 8KB
+
+        Args:
+            sp: Current stack pointer value (int).
+
+        Returns:
+            Stack top address (int).
+        """
+        # Level 1: _estack symbol
+        try:
+            import gdb
+            estack = int(gdb.parse_and_eval("&_estack"))
+            if estack > sp:
+                return estack
+        except Exception:
+            pass
+
+        # Level 2: SRAM region containing SP
+        for start, end in self.safe_regions:
+            if start <= sp < end:
+                return end
+
+        # Level 3: default 8KB
+        return sp + 8192
+
+    def _get_data_segments(self):
+        """Get .data and .bss segments from GDB 'info files'.
+
+        Returns list of dicts: [{"name": ".data", "vaddr": 0x..., "size": 0x...}, ...]
+        """
+        segments = []
+        try:
+            import gdb
+            output = gdb.execute("info files", to_string=True)
+            for match in re.finditer(
+                r"0x([0-9a-fA-F]+)\s+-\s+0x([0-9a-fA-F]+)\s+is\s+(\.\w+)",
+                output,
+            ):
+                start = int(match.group(1), 16)
+                end = int(match.group(2), 16)
+                name = match.group(3)
+                if name in (".data", ".bss"):
+                    segments.append({"name": name, "vaddr": start, "size": end - start})
+        except Exception:
+            pass
+        return segments
+
+    def _read_memory_chunked(self, addr, size, chunk_size=4096):
+        """Read memory in chunks, filling failed chunks with zeros.
+
+        Args:
+            addr: Start address.
+            size: Total bytes to read.
+            chunk_size: Bytes per chunk (default 4KB).
+
+        Returns:
+            bytes of length size.
+        """
+        result = bytearray()
+        for offset in range(0, size, chunk_size):
+            chunk = min(chunk_size, size - offset)
+            data = self.read_memory_safe(addr + offset, chunk)
+            if data is not None:
+                result.extend(bytes(data))
+            else:
+                result.extend(b"\x00" * chunk)
+        return bytes(result)
 
     def set_safe_regions(self, regions):
         """Set safe memory regions for bulk reads.

@@ -13,6 +13,7 @@ SAFETY = {
     "stagnation_limit": 3,
     "oscillation_window": 5,
     "timeout_per_step": 30,
+    "max_dump_size": 1048576,  # 1MB
 }
 
 
@@ -47,3 +48,7 @@ class SafetyChecker:
             if len(unique) <= 2:  # 只有 1-2 个不同状态
                 return True  # 振荡
         return False
+
+    def check_dump_size(self, size):
+        """检查 dump 大小是否超过限制"""
+        return size <= SAFETY["max_dump_size"]
