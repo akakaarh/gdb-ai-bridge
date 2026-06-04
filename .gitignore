@@ -1,14 +1,24 @@
+# Python
 __pycache__/
 *.pyc
-*.db
-*.json
-!tests/fixtures/*.json
+*.egg-info/
 .env
 .venv/
-*.egg-info/
+
+# 运行时生成
+*.db
+crashes/
+
+# 二进制固件（测试用的 .elf 在 tests/fixtures/ 下单独管理）
+*.elf
+
+# 测试数据保留
+!tests/fixtures/*.json
+!tests/fixtures/*.elf
+!tests/fixtures/*.c
+
+# Claude / Codex 配置
 CLAUDE.md
+AGENTS.md
 .claude/
 .codex/
-crashes/
-test_firmware.elf
-AGENTS.md
