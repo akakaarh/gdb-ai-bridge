@@ -1,40 +1,38 @@
 # GDB-AI Bridge
 
-> 将 GDB 调试会话与 AI 分析能力桥接，实现嵌入式崩溃的自动采集、分析和诊断。
+> 嵌入式崩溃了，粘贴日志给 AI，它帮你分析原因。
 
-**做什么**：GDB 采集崩溃上下文（寄存器、栈回溯、变量）→ 交给 AI → 自动分析崩溃原因。
+ARM Cortex-M/A 崩溃后，手动查寄存器、翻栈回溯、猜原因——这个工具让 AI 来做。
 
-**适用场景**：ARM Cortex-M/A 内核崩溃、HardFault 故障诊断、Linux 内核 oops、驱动 probe 失败。
+**能做什么**：
+- 粘贴内核 oops / HardFault 日志 → AI 输出崩溃原因和修复建议
+- GDB 里一条命令 `ai dump` → 自动采集寄存器、栈回溯、变量
+- `ai auto on` → 崩溃时自动采集，不用手动操作
+- `ai coredump` → 生成 ELF core dump，离线用 GDB 调试
 
-**核心能力**：
-- 离线分析：粘贴 oops log，AI 输出分析报告
-- GDB 扩展：`ai collect` / `ai dump` / `ai auto` / `ai coredump` 命令自动采集崩溃上下文
-- Core Dump：崩溃时保存内存快照为标准 ELF 文件，GDB 直接打开离线调试
-- AI 调试循环：GDB + 串口 + AI 联动，自动诊断嵌入式故障
-- SSH 远程调试：开发板在远程机器上，通过 SSH 执行 GDB 和读取串口
-- MCP Server：AI agent 直接调用分析工具
+**已验证**：STM32MP157 (Cortex-A7 + Cortex-M4)、Linux 内核 oops、裸机 HardFault。
 
-## 快速开始
+## 30 秒上手
 
 ```bash
-# 1. 安装（串口功能需要 pyserial，其他无依赖）
-pip install pyserial
-
-# 2. 离线分析 oops log
+# 离线分析：粘贴 oops log，AI 输出分析
 python analyzer.py oops.txt
-
-# 3. GDB 中使用
-(gdb) source gdb_bridge/gdb_bridge.py
-(gdb) ai config arch arm target baremetal
-(gdb) ai collect
-(gdb) ai dump crash.json
 ```
 
-### 前置条件
+```gdb
+# GDB 中：崩溃时自动采集
+(gdb) source gdb_bridge/gdb_bridge.py
+(gdb) ai config arch arm target baremetal
+(gdb) ai auto on --coredump --dir ./crashes
+(gdb) continue
+# 崩溃后自动保存 crash.json + crash.core
+```
+
+## 前置条件
 
 - Python 3.10+
-- GDB（`arm-none-eabi-gdb-py3` 或 `gdb-multiarch`，需带 Python 支持）
-- 调试服务器（OpenOCD / J-Link / pyOCD，用于连接目标板）
+- GDB（需带 Python 支持）
+- 调试服务器（OpenOCD / J-Link / pyOCD）
 
 验证 GDB Python 支持：
 ```bash
@@ -46,7 +44,7 @@ arm-none-eabi-gdb-py3 --batch -ex "python print('OK')"
 
 ### 离线分析
 
-分析 oops log 或 GDB bridge JSON，输出 AI 分析 prompt：
+不接板子也能用——粘贴 oops log，AI 输出分析报告：
 
 ```bash
 python analyzer.py oops.txt            # 分析 oops log
@@ -56,11 +54,9 @@ python analyzer.py oops.txt -o prompt.txt  # 输出到文件
 
 ### GDB 扩展命令
 
-在 GDB 中加载 bridge 后，使用 `ai` 命令：
-
 ```gdb
 (gdb) source gdb_bridge/gdb_bridge.py
-(gdb) ai config arch arm target baremetal    # 配置架构
+(gdb) ai config arch arm target baremetal
 (gdb) ai collect                    # 采集上下文（打印）
 (gdb) ai dump crash.json            # 采集并保存
 (gdb) ai report crash.json          # 显示崩溃报告
@@ -77,94 +73,9 @@ python analyzer.py oops.txt -o prompt.txt  # 输出到文件
 | `ai dump <file> [--full]` | 采集并保存到 JSON |
 | `ai report <file>` | 在 GDB 中显示崩溃报告 |
 | `ai auto on\|off\|status` | 崩溃自动采集开关 |
-| `ai coredump <file> [--all] [--max-size N]` | 生成 ELF core dump（内存快照） |
+| `ai coredump <file> [--all] [--max-size N]` | 生成 ELF core dump |
 | `ai serve [port]` | 启动 HTTP API（默认 9999） |
 | `ai exec <cmd>` | 执行 GDB 命令 |
-
-### AI 调试循环
-
-GDB + 串口 + AI 联动，自动诊断：
-
-```python
-from debug_loop.gdb_client import GDBClient
-from debug_loop.serial_monitor import SerialMonitor
-from debug_loop.loop import DebugLoop
-
-client = GDBClient(port=9999)           # 连接 GDB HTTP API
-mon = SerialMonitor("COM3", 115200)     # 读取串口
-mon.start()
-
-loop = DebugLoop(
-    goal="从 I2C 传感器读取温度",
-    expected={"serial_contains": "Temperature:"},
-    serial_monitor=mon,
-    gdb_client=client,
-)
-result = loop.run()
-# {'status': 'success', 'reason': '...', 'iterations': 3}
-```
-
-### SSH 远程调试
-
-开发板在远程机器上（实验室服务器、STM32MP157 A7 核等），通过 SSH 执行 GDB 命令和读取串口。
-
-**依赖**：系统 `ssh` 命令（Windows 10+ 自带 OpenSSH，Linux/macOS 默认安装）。无额外 Python 包。
-
-```python
-from debug_loop.ssh_config import SSHConfig
-from debug_loop import create_debug_loop
-
-ssh = SSHConfig(host="192.168.1.100", user="root")
-
-loop = create_debug_loop(
-    goal="M4 HardFault 诊断",
-    transport="ssh",
-    ssh_config=ssh,
-    remote_serial="/dev/ttySTM1",        # 远程串口
-    gdb_command="gdb-multiarch",
-    remote_elf="/home/root/m4_firmware.elf",
-)
-result = loop.run()
-```
-
-| SSH 参数 | 说明 | 默认值 |
-|----------|------|--------|
-| `host` | 远程主机（必填） | — |
-| `user` | SSH 用户名 | 当前用户 |
-| `port` | SSH 端口 | 22 |
-| `key_file` | 私钥路径 | `~/.ssh/id_rsa` |
-| `connect_timeout` | 连接超时（秒） | 10 |
-| `control_master` | 连接复用 | True |
-
-SSH 自动继承 `~/.ssh/config`，支持 ProxyJump、Agent Forwarding 等。
-
-> **Phase 1 限制**：当前为 per-command 模式，适合崩溃分析。断点不跨调用保持，不支持 step-through。
-
-## 架构适配
-
-### 支持的架构
-
-| 架构 | 适用芯片 | 特殊功能 |
-|------|----------|----------|
-| `arm` | Cortex-M0/M3/M4/M7/M33, Cortex-A7/A9 | SCB/CFSR/HFSR 故障解码 |
-| `arm64` | Cortex-A53/A72/A76 | — |
-
-### 支持的目标类型
-
-| 目标 | 说明 | 栈回溯方式 |
-|------|------|-----------|
-| `baremetal` | 裸机 / RTOS（FreeRTOS、Zephyr） | GDB frame chain |
-| `linux` | Linux 内核 | GDB bt + kallsyms |
-
-### 调试服务器
-
-本项目不绑定调试服务器，通过 GDB `target remote` 连接。常用：
-
-- **OpenOCD**（推荐）：`openocd -f your.cfg` → 监听 3333
-- **J-Link**：`JLinkGDBServer -device <chip> -if SWD` → 监听 2331
-- **pyOCD**：`pyocd gdbserver --target <chip>` → 监听 3333
-
-详细配置见 [配置指南](docs/config-guide.md)。
 
 ### Core Dump
 
@@ -183,6 +94,69 @@ arm-none-eabi-gdb-py3 firmware.elf -c crash.core
 ```
 
 详见 [Core Dump 教程](docs/core-dump-tutorial.md)。
+
+### AI 调试循环
+
+GDB + 串口 + AI 联动，自动诊断嵌入式故障：
+
+```python
+from debug_loop.gdb_client import GDBClient
+from debug_loop.serial_monitor import SerialMonitor
+from debug_loop.loop import DebugLoop
+
+client = GDBClient(port=9999)
+mon = SerialMonitor("COM3", 115200)
+mon.start()
+
+loop = DebugLoop(
+    goal="从 I2C 传感器读取温度",
+    expected={"serial_contains": "Temperature:"},
+    serial_monitor=mon,
+    gdb_client=client,
+)
+result = loop.run()
+# {'status': 'success', 'reason': '...', 'iterations': 3}
+```
+
+### SSH 远程调试
+
+开发板在远程机器上，通过 SSH 执行 GDB 和读取串口：
+
+```python
+from debug_loop.ssh_config import SSHConfig
+from debug_loop import create_debug_loop
+
+ssh = SSHConfig(host="192.168.1.100", user="root")
+
+loop = create_debug_loop(
+    goal="M4 HardFault 诊断",
+    transport="ssh",
+    ssh_config=ssh,
+    remote_serial="/dev/ttySTM1",
+    gdb_command="gdb-multiarch",
+    remote_elf="/home/root/m4_firmware.elf",
+)
+result = loop.run()
+```
+
+## 架构适配
+
+| 架构 | 适用芯片 | 特殊功能 |
+|------|----------|----------|
+| `arm` | Cortex-M0/M3/M4/M7/M33, Cortex-A7/A9 | SCB/CFSR/HFSR 故障解码 |
+| `arm64` | Cortex-A53/A72/A76 | — |
+
+| 目标 | 说明 | 栈回溯方式 |
+|------|------|-----------|
+| `baremetal` | 裸机 / RTOS（FreeRTOS、Zephyr） | GDB frame chain |
+| `linux` | Linux 内核 | GDB bt + kallsyms |
+
+不绑定调试服务器，通过 GDB `target remote` 连接。常用：
+- **OpenOCD**：`openocd -f your.cfg` → 监听 3333
+- **J-Link**：`JLinkGDBServer -device <chip> -if SWD` → 监听 2331
+- **pyOCD**：`pyocd gdbserver --target <chip>` → 监听 3333
+
+换芯片不需要改代码——改 OpenOCD 配置 + `ai config arch/target` 即可。
 
 ## MCP Server
 
@@ -249,9 +223,6 @@ python -m pytest tests/ -v    # 运行所有 416 个测试
 
 **Q: GDB 没有 Python 支持？**
 A: 安装 xPack ARM GCC：`winget install xPack.arm-none-eabi-gcc`
-
-**Q: 换芯片需要改代码？**
-A: 不需要。改 OpenOCD 配置 + `ai config arch/target` 即可。
 
 **Q: SSH 连接慢？**
 A: SSHConfig 默认开启 ControlMaster，首次连接后后续命令几乎零开销。

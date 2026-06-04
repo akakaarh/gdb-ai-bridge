@@ -8,3 +8,6 @@ __pycache__/
 *.egg-info/
 CLAUDE.md
 .claude/
+.codex/
+crashes/
+test_firmware.elf
